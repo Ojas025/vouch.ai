@@ -1,3 +1,7 @@
+from cmath import exp
+import hashlib
+import hmac
+
 """
 # Tool Use
 
@@ -51,5 +55,22 @@ ContextItem(
 }
 """
 
-def validate_signature(raw_payload: dict, headers: dict) -> bool:
-        ...
+def verify_whatsapp_signature(body: bytes, signature: str, app_secret: str) -> bool:
+    if not signature:
+        return False
+
+    expected = hmac.new(app_secret.encode(), body, hashlib.sha256).hexdigest()
+
+    expected = f"sha256={expected}"
+
+    return hmac.compare_digest(expected, signature)
+
+def verify_telegram_token(body: bytes, token: str, secret_token: str) -> bool:
+    if not token:
+        return False
+
+    expected = hmac.new(secret_token.encode(), body, hashlib.sha256).hexdigest()
+
+    expected = f"sha256={expected}"
+
+    return hmac.compare_digest(expected, token)

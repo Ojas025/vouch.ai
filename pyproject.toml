@@ -8,7 +8,9 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "fastapi>=0.142.0",
     "pydantic>=2.13.5",
+    "redis>=8.1.0",
 ]
 
 [project.scripts]
