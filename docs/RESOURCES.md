@@ -1,8 +1,30 @@
 # Vouch — Engineering & Research Resources (2024–2026 Curriculum)
 
 > **Curriculum Scope:** This document catalogs the foundational papers, architectural blueprints, and engineering standards required to build **Vouch**. Filtered specifically for a **student engineer building a production system**, this list completely omits outdated 2023-era agent paradigms (such as unstructured chatbot debates or loose string prompts) in favor of modern (2024–2026) capability security, asymmetric tool-augmented debate, type-safe state graphs, and logit-free conformal prediction.
+>
+> **Phase 4 is different in kind.** Phases 1–3 are *foundations* — what you need to know. Phase 4
+> (entries 13–17) is *prior art* — systems that already built a multi-agent fraud/scam
+> investigation product, read in source, with their measurements and their defects. Phase 4 exists
+> because Vouch's central unanswered question — **does the asymmetric-tool DAG earn its ~15× token
+> cost over one well-prompted call?** — is not answerable from first principles. It is only
+> answerable by reading what shipped, what it measured, and where it broke. Several entries in
+> Phase 4 are counter-examples on purpose.
 > 
-> *All 12 resources listed have been verified via live HTTP status checks (200 OK).*
+> **Citation verification status:** Every arXiv ID in this document has been checked against the
+> arXiv API for **title and author match**, not HTTP status. Two entries (#8, #12) previously
+> carried fabricated IDs that resolved to unrelated papers while still returning `200 OK` — see the
+> correction notes inline. Non-arXiv sources (vendor docs, blog posts) are **not** content-verified
+> and are marked where relevant.
+>
+> **Phase 4 verification status (added 2026-10-03):** entries #13–#16 were read in full, from
+> source where one exists (`back/detectAgents.py`, `python-ml/agents/agent_coordinator.py`,
+> `python-ml/agents/base_agent.py`, `agents.py`, `config/agents.yaml` — all cloned and read, not
+> summarised from the README). Entry #14's ablation tables were read from the arXiv HTML full text.
+> Entry #17's Oracle page was fetched and its visible text extracted in full; **the 60%/40%
+> effectiveness figures attributed to it in the project notes do not appear in it** and have been
+> retracted. The MDPI paper in the same group could not be retrieved (403 on all paths) and is
+> recorded as metadata-only. One item is **not yet released** (ConScamBench-278) and one is
+> **license-unclear** (AgentDroid's dataset); both are marked.
 
 ---
 
@@ -14,22 +36,28 @@ Do not read these all at once. Follow this 3-phase curriculum aligned with the i
 flowchart LR
     P1["Phase 1: Ingestion & Cache<br/>(Normalizer + MinHash LSH)"] --> P2["Phase 2: Security & Multi-Agent DAG<br/>(CaMeL Air-Gap + Tool-MAD + PydanticAI)"]
     P2 --> P3["Phase 3: State Machine & HITL Gate<br/>(LangGraph State + Logit-Free Conformal)"]
+    P3 --> P4["Phase 4: Prior Art<br/>(What shipped, what it measured, what broke)"]
 ```
 
 | Order | Resource | Estimated Time | What You Learn Before Writing Code |
 |:---:|---|:---:|---|
 | **1** | [AppCheck: Unicode Normalization Vulnerabilities](#1-appcheck-unicode-normalization-vulnerabilities--special-k) | 20 min | Why `NFKC` must run before regex extraction and validation. |
 | **2** | [Unicode Technical Report #39](#2-unicode-technical-report-39-unicode-security-mechanisms) | 15 min | How to fold confusables and homoglyphs into canonical ASCII. |
-| **3** | [Stanford CS246: MMDS Chapter 3](#3-stanford-cs246-mining-of-massive-datasets--ch-3) | 35 min | The intuition of Shingles, MinHash signatures, and LSH bands. |
+| **3** | [Stanford CS246: MMDS Chapter 3](#3-stanford-cs246-mining-of-massive-datasets--ch-3-finding-similar-items) | 35 min | The intuition of Shingles, MinHash signatures, and LSH bands. |
 | **4** | [Datasketch MinHash LSH Docs](#4-datasketch-minhash-lsh-python-documentation) | 10 min | How to implement the 128-permutation cache index in Python. |
-| **5** | [Google DeepMind: CaMeL (2025)](#5-google-deepmind-camel-defeating-prompt-injections-by-design) | 25 min | The mathematical capability boundary (Quarantined vs Privileged). |
+| **5** | [Google DeepMind: CaMeL (2025)](#5-google-deepmind-camel--defeating-prompt-injections-by-design) | 25 min | The mathematical capability boundary (Quarantined vs Privileged). |
 | **6** | [OWASP Top 10 for LLM: LLM01 (2025)](#6-owasp-top-10-for-llm-llm01---prompt-injection-2025-edition) | 15 min | Real-world indirect prompt injection attack surfaces. |
-| **7** | [Tool-MAD: Tool-Augmented Debate (2026)](#7-tool-mad-a-multi-agent-debate-framework-with-diverse-tool-augmentation) | 25 min | Why debate needs asymmetric tools + a quantitative judge. |
+| **7** | [Tool-MAD: Tool-Augmented Debate (2026)](#7-tool-mad-a-multi-agent-debate-framework-for-fact-verification-with-diverse-tool-augmentation-and-adaptive-retrieval) | 25 min | Why debate needs asymmetric tools + a quantitative judge. |
 | **8** | [Can LLM Agents Really Debate? (2025)](#8-can-llm-agents-really-debate-a-controlled-study) | 20 min | The empirical ceiling of multi-agent debate (why 2 debaters max). |
 | **9** | [PydanticAI Architecture Documentation](#9-pydanticai-production-agent-framework-built-on-pydantic) | 20 min | Strict schema validation and dependency injection for agents. |
 | **10** | [Eugene Yan: Production LLM Patterns](#10-eugene-yan-patterns-for-building-llm-based-systems--products) | 25 min | Deterministic validation gates (`CODE_GATE`) and latency budgets. |
 | **11** | [LangGraph: Workflows as State Graphs](#11-langgraph-multi-agent-workflows-as-state-graphs) | 20 min | Cyclic state machines with checkpoints and pause/resume logic. |
 | **12** | [API is Enough: Logit-Free Conformal Prediction (2024)](#12-api-is-enough-conformal-prediction-for-llms-without-logit-access) | 25 min | How to generate statistically guaranteed prediction sets via APIs. |
+| **13** | [streaming-fraud-intelligence: Gated Fan-Out + Deterministic Synthesis](#15-streaming-fraud-intelligence--distributed-cloud-native-fraud-detection) | 40 min | ⭐ **Copy the disagreement gate and the LLM-free final step. Reject the regex-parsed LLM output and the self-reported confidence.** |
+| **14** | [AgentDroid: Multi-Agent Fraudulent-APK Detection](#13-agentdroid-a-multi-agent-framework-for-detecting-fraudulent-android-applications) | 40 min | ⭐ A dependency-triggered DAG over a shared blackboard — and `temperature=0.95` in a fraud verdict. |
+| **15** | [Conversational-Scam Agentic System + ConScamBench-278](#14-an-explainable-agentic-system-for-detection-of-conversational-scams-with-summary-based-memory) | 45 min | ⭐ **The only fixed-backend component ablation of a multi-agent scam pipeline. Also why the eval corpus gap is field-wide.** |
+| **16** | [minerva: AutoGen Round-Robin Scam System](#16-minerva--multi-agent-llm-system-for-digital-scam-protection) | 25 min | The naive baseline in 573 lines — disjoint tools, no shared state, turn-capped. |
+| **17** | [Oracle Multi-Agent Fraud Detection on OCI](#17-oracle-learn-about-deploying-a-multi-agent-ai-fraud-detection-system-on-oci) | 15 min | Enterprise topology vocabulary. **Contains no measurements — see the retraction.** |
 
 ---
 
@@ -92,25 +120,35 @@ flowchart LR
 * **Vouch Module:** Security boundary around `SearXNG` output ingestion and `CODE_GATE`.
 * **What to Read:** Focus on **Common Scenarios** and **Prevention and Mitigation Strategies**.
 
-#### 7. Tool-MAD: A Multi-Agent Debate Framework with Diverse Tool Augmentation
-* **Authors:** Kim et al. (Yonsei University)
+#### 7. Tool-MAD: A Multi-Agent Debate Framework for Fact Verification with Diverse Tool Augmentation and Adaptive Retrieval
+* **Authors:** Seyeon Jeong, Yeonjun Choi, JongWook Kim, Beakcheol Jang
 * **Date:** January 2026
 * **Source:** [https://arxiv.org/abs/2601.04742](https://arxiv.org/abs/2601.04742)
 * **Type:** Frontier Multi-Agent Research Paper
 * **Core Concept:** Standard multi-agent debate fails when models debate in an ungrounded vacuum. Tool-MAD introduces two critical innovations:
   1. **Heterogeneous Tool Augmentation:** Rather than symmetric agents, agents receive asymmetric, specialized external tools (e.g., Accuser gets ThreatFox/Abuse.ch; Defender gets institutional registry verification).
   2. **Quantitative Judge:** The adjudicating model evaluates arguments using formal *Faithfulness* and *Relevance* metrics, terminating rounds when convergence is achieved.
-* **Vouch Module:** `src/vouch/agents/accuser.py`, `src/vouch/agents/defender.py`, and `src/vouch/judge.py`
+* **Vouch Module:** Asymmetric collectors (`ThreatCollector` / `LegitimacyCollector`) and the
+  adjudicator's convergence check.
+* **Note:** Vouch borrows the *heterogeneous tool* principle but **not** the free-form debate loop —
+  see `ARCHITECTURE.md` §6.1 for why contradiction detection is a function over a typed ledger
+  rather than a separate agent.
 * **What to Read:** Read **Section 1 (Introduction)**, **Section 3 (Framework Formulation)**, and study **Figure 2**.
 
 #### 8. Can LLM Agents Really Debate? A Controlled Study
-* **Authors:** Controlled empirical study on LLM deliberation
-* **Date:** February 2025
-* **Source:** [https://arxiv.org/abs/2502.13175](https://arxiv.org/abs/2502.13175)
+* **Authors:** Haolun Wu, Zhenkun Li, Lingyao Li
+* **Date:** November 2025
+* **Source:** [https://arxiv.org/abs/2511.07784](https://arxiv.org/abs/2511.07784)
 * **Type:** Critical Empirical Evaluation
-* **Core Concept:** Demonstrates the failure modes of naive multi-agent debate: without strict extrinsic diversity and independent evidence gathering, agents form **"confidently incorrect echo chambers"** and suffer from problem drift. Confirms that performance degrades past 2 debaters, validating an asymmetric 2-agent + 1-judge architecture.
-* **Vouch Module:** Deep investigation engine design constraints.
+* **Core Concept:** Controlled study of multi-agent debate using the Knight-Knave-Spy logic puzzle, where ground truth is verifiable step-by-step. Documents real failure modes: susceptibility to social pressure, difficulty assessing argument quality, and **premature convergence**. Notably, it finds that **team size and diversity are positive predictors of debate success** — eloquent-but-incorrect agents can sway others.
+* **Caveat:** External validity to fraud triage is nil — this is LLM logical reasoning on logic puzzles, not tool-augmented OSINT. Cite it for the *failure modes*, not for a headcount rule.
+* **Vouch Module:** Deep investigation engine design constraints — specifically why an eloquent-but-wrong claim must not be able to carry a verdict on its own.
 * **What to Read:** Read the **Abstract**, **Introduction**, and **Section 5 (Discussion & Recommendations)**.
+
+> **Correction (2026-10-03):** This entry previously cited `arXiv:2502.13175` ("Towards Robust and
+> Secure Embodied AI: A Survey") — an unrelated paper — and stated that the study "confirms that
+> performance degrades past 2 debaters." The real paper reports the opposite direction on team
+> size. Both the ID and the claim were wrong.
 
 #### 9. PydanticAI: Production Agent Framework Built on Pydantic
 * **Authors:** Samuel Colvin & the Pydantic Core Team
@@ -149,16 +187,273 @@ flowchart LR
 * **What to Read:** Study the architectural diagrams comparing **Hierarchical Supervisor vs Shared State**, along with the checkpointing model.
 
 #### 12. API is Enough: Conformal Prediction for LLMs Without Logit Access
-* **Authors:** Su et al.
-* **Date:** EMNLP 2024
-* **Source:** [https://arxiv.org/abs/2406.02701](https://arxiv.org/abs/2406.02701)
+* **Authors:** Jiayuan Su, Jing Luo, Hongwei Wang, Lu Cheng
+* **Date:** EMNLP 2024 Findings (arXiv March 2024)
+* **Source:** [arXiv:2403.01216](https://arxiv.org/abs/2403.01216) · [ACL Anthology](https://aclanthology.org/2024.findings-emnlp.54/) · [code](https://github.com/SU-JIAYUAN/LofreeCP)
 * **Type:** Practical Uncertainty Quantification Paper
-* **Core Concept:** Classical conformal prediction required direct access to internal model logit distributions, which are unavailable or uncalibrated when using modern hosted APIs (Gemini, Claude, GPT-4, or hosted vLLM). This paper demonstrates how to construct **finite-sample, mathematically guaranteed prediction sets using semantic similarity and ranking scores from black-box APIs**:
-  - If the prediction set is a singleton `{"SCAM"}`: High confidence $\to$ Auto-dispatched.
-  - If the prediction set is multi-class `{"SCAM", "LEGITIMATE"}`: High uncertainty $\to$ Automatically routes to the **HITL (Human-in-the-Loop) review queue**.
-* **Vouch Module:** `src/vouch/uncertainty_gate.py`
+* **Core Concept:** Classical conformal prediction requires access to internal model logit distributions, which are unavailable or miscalibrated when using hosted APIs (Gemini, Claude, GPT-4). This paper introduces **LofreeCP**, which builds nonconformity scores from three signals available over a black-box API:
+  - **Freq** (coarse): response frequency across repeated samples.
+  - **NE** (fine, prompt-wise): normalized entropy.
+  - **SS** (fine, response-wise): semantic similarity across samples.
+  - Singleton prediction set → auto-dispatch. Multi-label set → route to **HITL review queue**.
+* **Directly relevant to:** Vouch's Phase-2 calibration roadmap, and specifically the
+  **nonconformity score function** that `ARCHITECTURE.md` §7.2 identifies as the actual blocker.
+  An LLM-emitted confidence is *not* a conformity score; this paper shows what a real one looks like.
+* **Caveat:** Evaluated on TriviaQA / MMLM / WebQuestions, not on fraud detection. The guarantee
+  also assumes calibration and test data are exchangeable — which does not hold between a static
+  SMS corpus and live Indian user forwards.
 * **What to Read:** Read **Section 1 (Introduction)**, **Section 2 (Problem Formulation)**, and **Section 3 (Methodology)**.
 
+> **Correction (2026-10-03):** This entry previously cited `arXiv:2406.02701` ("MPCR: Multi-Precision
+> Computations Package in R") — an unrelated paper on numerical computation in R. Corrected to the
+> actual preprint ID, `2403.01216`, with full author list and DOI.
+
+---
+
+### Phase 4: Prior Art Closest to Vouch (2024–2026)
+
+> **Added 2026-10-03.** Phases 1–3 are the *foundations* Vouch needs. Phase 4 is the set of
+> systems that already **built the thing Vouch is building** — multi-agent fraud/scam
+> investigation. This phase exists because the load-bearing question in Vouch's architecture
+> ("does the asymmetric-tool DAG earn its 15× token cost?") cannot be answered from first
+> principles. It can only be answered by reading what shipped, what its authors measured, and
+> where it broke.
+>
+> **Every entry here was fetched and read on 2026-10-03.** Where a source could not be read
+> (bot-gated, or dataset not yet released) that is stated inline rather than glossed.
+
+#### 13. AgentDroid: A Multi-Agent Framework for Detecting Fraudulent Android Applications
+* **Authors:** Ruwei Pan, Hongyu Zhang, Zhonghao Jiang, Ran Hou
+* **Date:** arXiv 2025-03-15, rev v2 2025-10-08
+* **Source:** [arXiv:2503.12163](https://arxiv.org/abs/2503.12163) · code + dataset [github.com/Wwstarry/LLM4Fraud](https://github.com/Wwstarry/LLM4Fraud) · [video](https://youtu.be/YOM9Ex-nBts)
+* **Type:** Peer-adjacent research system. **Closest published system to Vouch's APK path.**
+* **Reported result:** 91.7% accuracy, F1 91.68% on a self-curated APK dataset (GPT-4o backend).
+* **Architecture (verified by reading `back/detectAgents.py`, 398 lines):**
+  - Phase I static extraction with **Androguard** (DEX bytecode, `AndroidManifest.xml`,
+    resources, permissions, icons, decompiled source).
+  - Phase II: **eight specialised LangGraph nodes** — `APP_Package_Tracer`,
+    `Sensitive_Info_Analizer`, `Certificate_Inspector`, `Icon_Analizer`, `Content_Analizer`,
+    `Relationship_Analizer` — plus a `supervisor` and a `Decision_Maker`.
+  - A shared `TypedDict` state `AgentState{messages, black, gamble, scam, sex, white, label, next}`
+    with `Annotated[Sequence[BaseMessage], operator.add]`, plus `add_conditional_edges` keyed on
+    `x["next"]`, and **task skipping** ("if an app lacks certificate information, the
+    Certificate Checker is skipped").
+  - This is the same **dependency-triggered DAG over a shared blackboard** shape Vouch uses for
+    the artifact path. It is the strongest external evidence that the shape is publishable.
+* **Vouch must copy:** the *dependency-triggered* dispatcher (an agent's output can schedule a
+  specific follow-up agent, not "the next agent"), and **task skipping as a first-class
+  primitive** so absent evidence costs zero LLM calls.
+* **Vouch must NOT copy — three concrete defects, all verified in source:**
+  1. **`temperature=0.95`** for every node (`back/detectAgents.py:110`). For a forensic verdict
+     this is indefensible: non-determinism in a chain-of-custody system. Vouch uses
+     **temperature 0** with disk-cached prompts.
+  2. **No structured-output guarantee.** The supervisor uses
+     `llm.bind_functions(..., function_call="route")` + `JsonOutputFunctionsParser`, and the
+     classifier uses the same. Free-form JSON parsing with no local validation. Vouch uses native
+     `strict` / `json_schema` constrained decoding plus local re-validation.
+  3. **Cross-agent tool overlap with only a source comment as mitigation.** `get_activaties` is
+     granted to *both* `APP_Package_Tracer` and `Sensitive_Info_Analizer`, annotated
+     `# NOTE: THIS PERFORMS ARBITRARY CODE EXECUTION. PROCEED WITH CAUTION`. A comment is not a
+     capability boundary. Vouch's `ToolRegistry` must make overlap *unrepresentable*, not
+     discouraged.
+* **Also note:** their `agent_node` passes the **entire accumulated `messages` list** to each
+  worker (`result = agent.invoke(state)`), so every agent sees every other agent's reasoning.
+  There is no disjoint view. This is the single biggest thing Vouch has that AgentDroid does not.
+* **Corpus:** the full dataset (~11 GB) is linked from the README (Google Drive + a `caiyun.139.com`
+  mirror, password published in-repo). The repo is live and cloneable but carries **no license
+  file**, so it is reference-only until that is resolved.
+* **What to Read:** §III (Proposed Approach), §III-C (Task Master and the shared `collectedData`
+  state), §III-D (Decision Making), and `back/detectAgents.py` lines 110–230.
+
+#### 14. An Explainable Agentic System for Detection of Conversational Scams with Summary-Based Memory
+* **Authors:** Ahmed Omar Salim Adnan, Yogananda Manjunath, Shivanjali Khare (Univ. of New Haven)
+* **Date:** arXiv 2026-07-13, rev 2026-07-15
+* **Source:** [arXiv:2607.11707](https://arxiv.org/abs/2607.11707) · [full HTML](https://arxiv.org/html/2607.11707v1)
+* **Type:** Research system + **new public benchmark (ConScamBench-278)**. The only source found
+  that publishes a component ablation of a multi-agent scam pipeline at a **fixed backend**.
+* **Reported results:** conversation-level detector reaches **97.8% accuracy** on
+  ConScamBench-278 and identifies **83/83** conversational scams in LoveFraud02.
+* **Three-stage pipeline:** Stage I privacy-oriented refactoring (PII redaction) → Stage II
+  sender-authenticity strengthening (extract + verify URLs, phone numbers, emails, claimed brand
+  identities) → Stage III conversational scam detection over a **summary-based memory**.
+  Signals named: identity inconsistency, grooming, redirection to external channels, urgency,
+  secrecy, financial requests.
+* **⭐ The single most valuable table in this document — component ablation at a fixed backend
+  (`deepseek-v3.1:671b`, identical labels and decision prompts; only the named component varies):**
+
+  | Configuration | Scam Recall | Precision | FPR | Avg. Detection Turn |
+  |---|---:|---:|---:|---:|
+  | Full system | 98.4% | 96.9% | 2.7% | 5.17 |
+  | − verifier | 98.4% | **92.6%** | **6.7%** | 5.03 |
+  | − investigator / summary | **96.1%** | 94.6% | 4.7% | **7.34** |
+  | SMD-only (conversation detector disabled) | **25.0%** | 97.0% | 0.7% | 8.16 |
+  | CSD-only (single-message detector disabled) | 98.4% | **97.7%** | 2.0% | 5.08 |
+
+  On LoveFraud02 the SMD-only row collapses to **7.1% recall at avg detection turn 312.75**.
+
+  Three things follow, and Vouch's architecture is directly contradicted by one of them:
+  - **The verifier buys precision, not recall.** Recall is flat at 98.4%; precision falls
+    4.3pp and FPR more than doubles without it. Vouch's Contradiction Auditor should be specified
+    as a **precision** control and evaluated as one.
+  - **Summary-based memory buys earlier detection and some recall**, not accuracy: removing it
+    delays detection from turn 5.17 → 7.34 with no precision gain. This is the strongest
+    available support for a digest-plus-references ledger over inline replay, and the first
+    measured evidence against "the memory *is* the product."
+  - ⚠️ **The single-message detector is nearly worthless for conversational fraud (7–25% recall),
+    and the conversation-level detector alone is the best-performing row.** Vouch treats a
+    forwarded message as a single isolated artifact. That assumption is now *measured* to be
+    sufficient only for instantaneous-payload scams, and insufficient for the grooming class
+    that dominates real Indian/South-East-Asian WhatsApp fraud. **This is a scope finding, not a
+    refactor: Vouch should keep single-artifact intake, but must record in the ledger that
+    `analysis_depth` is `single_artifact` and never imply longitudinal coverage.**
+* **Honest limits of their own evidence (they report these; Vouch should not quote the headline):**
+  - The reduced-state comparison (§5.5) puts the **monolithic single-call non-agentic classifier
+    at 94.5% recall / 6.7% FPR** against the full system's 98.4% / 2.7%. So the *entire*
+    multi-agent structural gain is **+3.9pp recall and −4.0pp FPR** over one well-prompted
+    call at the same backend. That is real, but it is not a large multiplier.
+  - The **no-scheduling** ablation (full agent set, fixed cadence instead of adaptive escalation)
+    scores 96.9% recall / **2.0% FPR** — *better FPR than the full system*. A material share of
+    the benefit comes from the **adaptive re-evaluation schedule**, not from agent decomposition.
+  - Their own "scam-adjacent benign" stress test, built with **no contact artifacts by
+    construction**, yields **6.6% FPR** — worse than the 2.7% on generic benign dialogue. Signal
+    survives artifact removal; precision does not.
+  - Inference is `temperature 0` with `response_format: json_object` and a **fallback when the
+    host rejects it**. `json_object` is not `json_schema`/`strict`; it constrains the envelope,
+    not the schema.
+* **⭐ The corpus finding — read this before planning the eval.** ConScamBench-278 is
+  **not yet released** ("will be released publicly upon publication of this paper"). And its
+  PII policy **replaces phone numbers, email addresses, links, and crypto wallet addresses with
+  fictional placeholders** while keeping the scam behaviour.
+  → *Even when released, it contains zero real artifacts, so it cannot exercise Vouch's URL /
+  domain / UPI / IFSC collectors any better than `MOZNLP/MOZ-Smishing` does.* This is a
+  **field-wide** property, not our bad luck: the conversational-scam-detection literature
+  systematically destroys exactly the artifacts Vouch's collectors depend on. That reframes the
+  eval corpus from "a sourcing problem we have not solved yet" into "a gap we can characterise
+  and measure" — see the collector-coverage metric in `ARCHITECTURE.md` §6.1c.
+* **What Vouch should copy:** the **threat-tiered re-evaluation cadence** (re-run on every turn
+  at high threat, every 2nd at medium, every 3rd at low, every 5th at none) — cheap
+  escalation gating that costs nothing on clean cases; and the **artifact trigger restricted to
+  external-party messages, never user-authored ones**.
+* **What Vouch should copy, uncredited by them:** they route third-party lookups so the search API
+  "receives isolated brand names and artifacts only", replacing a third-party reader (Jina) with a
+  **local headless browser + Docling**. That is information-flow control by construction, and it
+  is the same decision Vouch already made for its URL-fetch sandbox.
+* **What to Read:** §3.1–3.3 (the three stages), §5.5, §5.6 (ablation), §5.8 (scam-adjacent
+  stress test), and the "Orchestration and adaptive schedule" / "Verification" appendix notes.
+
+#### 15. streaming-fraud-intelligence — Distributed, Cloud-Native Fraud Detection
+* **Authors:** Siddhartha Devineni
+* **Date:** created 2025-09-07, last push 2026-08-02
+* **Source:** [github.com/siddharthaDevineni/streaming-fraud-intelligence](https://github.com/siddharthaDevineni/streaming-fraud-intelligence) (MIT, 8 stars, Python)
+* **Type:** Production-shaped reference implementation. **The clearest small code example of the
+  exact fan-out → gated-collaboration → deterministic-synthesis topology Vouch needs.**
+* **Topology (verified in `python-ml/agents/agent_coordinator.py`, 17.8 KB):**
+  - **Phase 1 — 5 parallel specialised agents** via `ThreadPoolExecutor(max_workers=5)`:
+    `BehaviorAnalyst`, `PatternDetector`, `RiskAssessor`, `GeographicAnalyst`, `TemporalAnalyst`.
+  - **Phase 2 — conditional collaboration.** `_has_disagreement()` computes
+    `max(scores) - min(scores) > DISAGREEMENT_THRESHOLD (0.4)`. Only on disagreement (or high
+    transaction velocity / an existing customer profile) does it spend **4 more LLM calls** on
+    targeted collaboration plus **1 consensus-coordinator call**.
+  - **Phase 3 — deterministic synthesis, "No additional LLM call."** `_weighted_risk_score()`
+    (weight-per-agent weighted mean), a `_streaming_bonus()` of `+0.25` high-velocity /
+    `+0.20` unusual-amount / `+0.10` high-risk-customer, then
+    `is_fraudulent = final_risk >= FRAUD_THRESHOLD (0.6)`.
+  - Every agent returns one typed dataclass: `AgentInsight{agent_name, risk_score, confidence,
+    reasoning, recommendation, weight, pattern}`.
+  - Runs on **Groq** (`temperature=0.1`), with **LangSmith tracing** and **structlog** throughout.
+* **⭐ Vouch must copy — three things, and this is the highest code-to-value ratio in the list:**
+  1. **The disagreement gate.** Spend extra deliberation *only* where agents actually conflict.
+    This is an independent, shipped implementation of escalation-gated deliberation and it maps
+    one-to-one onto Vouch's Contradiction Auditor: *the Auditor exists to resolve a detected
+    contradiction, and clean runs never invoke it.* It is also the cheapest possible answer to
+    Vouch's 15×-token problem.
+  2. **Deterministic final synthesis with the LLM forbidden from the last step.** The verdict
+    threshold is code, not a prompt. Vouch's Jev must apply the same rule: the Magistrate
+    adjudicates; the arithmetic that turns adjudication into a `verdict` field does not.
+  3. **A typed per-agent return record as the inter-agent currency.** Not prose, not a transcript.
+* **⚠️ Vouch must NOT copy — three anti-patterns, all verified in source:**
+  1. **`parse_llm_response()` extracts structured fields with regex** —
+     `re.search(r"RISK_SCORE:\s*([0-9.]+)", text)` — and **silently defaults to `0.5`** when the
+     pattern misses. A schema violation becomes a confident-looking number. This is precisely the
+     failure mode native `strict`/`json_schema` constrained decoding exists to prevent. Treat
+     "regex-parse the LLM's prose" as a banned pattern in Vouch's code review checklist.
+  2. **Hand-tuned agent weights.** `weight=0.8` hardcoded on two consensus insights, default
+     `1.0` elsewhere. These constants are unjustified by any measurement and silently encode
+     which analysts the author trusted. Vouch's weights must be fitted on held-out data or
+     derived from evidence provenance — never hand-set.
+  3. **The LLM self-reports its own confidence.** When the consensus coordinator runs, its
+     `risk_score` is copied straight into `confidenceScore`; the code comment says outright
+     *"This is what the LLM decided."* Self-reported confidence is not a calibrated
+     confidence — it is an unvalidated claim about the model's own certainty, and
+     `ARCHITECTURE.md`'s whole reason for using logit-free conformal prediction is that
+     LLM-emitted confidence does not satisfy a conformity guarantee. **Do not let a Vouch agent
+     emit its own `confidence` field.** Confidence is computed by the deterministic scorer.
+  4. *(bonus)* A deterministic `+0.25` velocity bonus added straight into the risk score is
+     unmotivated arithmetic that inflates recall on exactly the cases a bank's velocity rules
+     already catch. Vouch keeps such signals as **ledger claims with a source**, never as
+     pre-baked score offsets.
+
+#### 16. minerva — Multi-Agent LLM System for Digital Scam Protection
+* **Authors:** David Carpintero
+* **Date:** created 2024-12-10, last push 2024-12-19 (**unmaintained for ~22 months**)
+* **Source:** [github.com/dcarpintero/minerva](https://github.com/dcarpintero/minerva) (Apache-2.0, 15 stars, **573 lines of Python total**)
+* **Type:** Minimal AutoGen reference implementation for **image-forwarded WhatsApp scams** —
+  the same intake modality as Vouch. Read as a **counter-example**, not a model.
+* **Topology:** 7 agents in an AutoGen `RoundRobinGroupChat` with **`max_turns=7`** and
+  `TextMentionTermination("NO_TEXT_FOUND")`. Agents: `OCR_Specialist`, `Link_Checker`,
+  `Content_Analizer`, `Decision_Agent`, `Summary_Agent`, `Language_Translation_Agent`,
+  `Data_Storage_Agent`.
+* **✅ Two things it gets right, and both are already in Vouch's design:**
+  - **Disjoint per-agent tools.** OCR gets only the OCR tool, `Link_Checker` only `is_url_safe`,
+    `Data_Storage_Agent` only `store_result`. This is the canonical reference implementation of
+    asymmetric tool access — the pattern `ARCHITECTURE.md` §4 relies on — and it is
+  demonstrated here in 15 lines.
+  - **A capability-separation instruction on the OCR agent:** *"Do not perform any analysis on
+    the extracted text… Reply with the extracted text."* The extractor is explicitly forbidden
+    from interpreting. That is Vouch's "no component holding attacker-controlled bytes has tools
+    or analysis capability" invariant, arrived at independently and stated in a prompt.
+* **❌ Why it is not a model — and each failure maps to a specific Vouch requirement:**
+  | minerva | Consequence | Vouch requirement it violates |
+  |---|---|---|
+  | **No shared structured state at all** — agents read a linear chat thread | Every agent sees every other agent's prose; framing contaminates the "independent" reviewer | §4 disjoint views / Contradiction Auditor independence |
+  | Round-robin, turn-capped | Nobody decides anything; ordering is an implementation detail | §4 Jev as Inquest planner |
+  | `TextMentionTermination("NO_TEXT_FOUND")` | Termination is a string match on model output — the artifact decides when the pipeline stops | §4 convergence criterion |
+  | `decision_agent` returns `'1'`/`'0'` + confidence 1–5 | Uncalibrated scalar as the verdict | §7 logit-free conformal prediction |
+  | Prompts request "common scam patterns" | Enumerating known patterns; new scam families are invisible | §6 correlated-beliefs objection |
+  | URL checking is one opaque `is_url_safe` bool | No provenance, no per-claim attribution, unauditable | §5 typed evidence ledger |
+* **Net:** minerva is the **naive baseline** — the "multi-agent = several personas in a chat
+  room" version of Vouch's design. Useful precisely because it is a clean, runnable
+  counter-example that isolates which of Vouch's seven architectural commitments actually
+  pay. Its 573-line size also makes it a fair "what does the minimum look like" reference.
+* **What to Read:** `agents.py` (all 140 lines), `config/agents.yaml`.
+
+#### 17. Oracle: "Learn About Deploying a Multi-Agent AI Fraud Detection System on OCI"
+* **Source:** [docs.oracle.com/en/solutions/ai-fraud-detection/index.html](https://docs.oracle.com/en/solutions/ai-fraud-detection/index.html) (fetched 2026-10-03; 9,220 chars of visible text)
+* **Type:** Vendor reference architecture. Two phases: Autonomous Database for state,
+  OCI Functions as microservices, OCI Generative AI for inference, GoldenGate / Streaming.
+* **The architecture it describes:** multiple specialised agents (fraud analyzer, data retrieval,
+  evidence collection, narrative generation) **coordinated by a central orchestrator /
+  supervisor agent**, *"mimic[king] an investigative team that surfaces insights, collects
+  evidence, recommends decisions, and generates narratives."* Explicitly inspired by The Guardian
+  Life's fraud-prevention work.
+* **⚠️ Citation correction — the "60% faster / 40% more accurate" figures are NOT from this
+  source.** The page contains **zero percentage values**: `"60" in text → False`, `"%" in text →
+  False`, `re.findall(r"\d+\s*%", text) → []`. Whatever produced those numbers, this page did
+  not, and they must not be cited to Oracle. Treat any 60%/40% claim in this project's write-ups
+  as unsourced until a primary measurement is located.
+* **Value to Vouch:** it is the enterprise-architecture *narrative* for exactly Vouch's
+  supervisor-orchestrated specialist-team shape, and it is useful for framing — but it is a
+  **reference architecture, not an evaluation.** It ships no measurements, no dataset, no code.
+  Cite it for topology vocabulary; never cite it for effectiveness.
+* **Sibling in the user's source list:** the MDPI item
+  **"A Hybrid Multi-Agent System for Early Scam Detection in Crypto-Assets"**, Trerotola, Parente,
+  Calvaresi, *Applied Sciences* **16(7):3122**, issued 2026-03-24,
+  [doi:10.3390/app16073122](https://doi.org/10.3390/app16073122) — metadata confirmed via the
+  Crossref API. **The full text is bot-gated (403 to every fetch path tried: `/htm`, `/pdf`,
+  and the DOI resolver), so its contents are NOT verified here.** It is recorded so the citation
+  is not lost, and it must be read through a browser before any claim is attributed to it.
+  (Calvaresi's co-authorship is the reason it is worth the effort — the group works on
+  multi-agent coordination and game-theoretic convergence, which is Vouch's convergence problem.)
 
 ---
 

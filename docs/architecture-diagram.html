@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vouch v3.5 — Architecture Diagram</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            padding: 2rem;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 0.5rem;
+            color: #58a6ff;
+            font-size: 1.8rem;
+        }
+        .subtitle {
+            text-align: center;
+            margin-bottom: 2rem;
+            color: #8b949e;
+            font-size: 0.95rem;
+        }
+        .mermaid {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 2rem;
+        }
+        .legend {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 1.5rem;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+        }
+        .legend h2 {
+            color: #58a6ff;
+            margin-bottom: 1rem;
+            font-size: 1.1rem;
+        }
+        .legend-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
+        }
+        .legend-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+        }
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+            margin-top: 2px;
+            flex-shrink: 0;
+        }
+        .legend-text {
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
+        .legend-text strong {
+            color: #c9d1d9;
+        }
+    </style>
+</head>
+<body>
+    <h1>Vouch v3.5 — Architecture</h1>
+    <p class="subtitle">Multi-Modal Forensic Investigation Engine</p>
+
+    <div class="mermaid">
+flowchart TB
+    %% Ingestion
+    subgraph INGEST["🔌 Ingestion Layer"]
+        direction TB
+        A1[Telegram / WhatsApp / REST]
+        A2[WebhookDelivery]
+        A3[ExternalEvent]
+        A4[Rate Limiting<br/>IP → Auth]
+        A5[Channel Auth<br/>HMAC / Secret Token]
+        A6[Replay Protection<br/>event-id / update_id]
+        A7[Transactional Outbox]
+        A8[(PostgreSQL<br/>Durable Accept)]
+        A1 --> A2 --> A3 --> A4 --> A5 --> A6 --> A7 --> A8
+    end
+
+    %% Canonicalization
+    subgraph CANON["📝 Canonicalization & Entity Extraction"]
+        direction TB
+        B1[Raw Text]
+        B2[NFKC Text]
+        B3[Format Stripped]
+        B4[UTS #39 Skeleton<br/>feature only]
+        B5[Script Profile]
+        B6[Typed Entities<br/>PHONE / VPA / DOMAIN / IFSC / AMOUNT]
+        B1 --- B2 --- B3 --- B4 --- B5 --- B6
+    end
+
+    %% Triage
+    subgraph TRIAGE["🔍 Triage / Cache Hierarchy"]
+        direction TB
+        C1[Tier 0: Exact Hashes]
+        C2[Tier 1: MinHash<br/>candidate generator]
+        C3[Tier 2: Entity Graph<br/>retrieval evidence]
+        C4[Tier 3: Dense Retrieval<br/>deferred]
+        C5[Tier 4: Modality Analysis]
+        C6[Tier 5: LLM Investigation]
+        C7[Prior Evidence Re-Validator]
+        C1 --> C2 --> C3 --> C4 --> C5 --> C6
+        C7 -.-> C1
+    end
+
+    %% Modality Branches
+    subgraph BRANCHES["🔧 Modality Branches — Hardened Sandbox"]
+        direction TB
+        D1[4A URL<br/>Obscura + SSRF defenses]
+        D2[4B APK<br/>Multi-modal: metadata, permissions,<br/>icons, content, certificates, dynamic]
+        D3[4C DOC<br/>oletools + pikepdf]
+        D4[4D IMAGE<br/>OCR + QR + C2PA]
+        D1 --- D2 --- D3 --- D4
+    end
+
+    %% Fact Services
+    subgraph FACTS["📡 Fact Services"]
+        direction TB
+        E1[Threat Feeds<br/>URLhaus, ThreatFox, PhishTank,<br/>OpenPhish, GSB]
+        E2[Registry<br/>RDAP, allowlists]
+        E3[Resolution<br/>IFSC, Razorpay, number-class]
+        E4[SourceFact<br/>typed, provenance-tracked, TTL]
+        E1 --- E2 --- E3 --- E4
+    end
+
+    %% Evidence Ledger
+    subgraph LEDGER["📋 Evidence Ledger"]
+        direction TB
+        F1[(Evidence Ledger<br/>append-only)]
+        F2[Investigation Snapshot<br/>immutable, versioned]
+        F1 --> F2
+    end
+
+    %% LLM Hub
+    subgraph HUB["🤖 LLM Hub"]
+        direction TB
+        G1[Orchestrator — Jev<br/>plan, dispatch, budget, converge]
+        G2[Adversarial Agent ×2<br/>independent hypothesis analysts]
+        G3[Web Search Agent<br/>isolated, typed observations]
+        G4[CSD/SMD Detector<br/>SMD: cheap, every submission<br/>CSD: thread-only, rolling summary]
+        G5[Auditor<br/>gated set-level consistency]
+        G1 --- G2 --- G3 --- G4 --- G5
+    end
+
+    %% Decision
+    subgraph DECISION["⚖️ Decision Engine"]
+        direction TB
+        H1[Multi-Dimensional<br/>phishing, impersonation, credential_theft,<br/>payment_fraud, malware, social_manipulation]
+        H2[DecisionRecord<br/>resolved_claims, unresolved_claims,<br/>contradictions, threat_classes]
+        H3[Convergence<br/>required scopes resolved ∧<br/>no unresolved critical contradiction ∧<br/>minimum evidence policy satisfied]
+        H1 --> H2 --> H3
+    end
+
+    %% Response
+    subgraph RESPONSE["💬 Grounded Response"]
+        direction TB
+        I1[Claim-ID Anchored Prose]
+        I2[Structural Grounding<br/>sentence → claim refs → evidence refs]
+        I3[Fail-Closed Templates<br/>VERIFIED_THREAT / SUSPICIOUS /<br/>INSUFFICIENT_EVIDENCE / BENIGN_WITH_LIMITATIONS]
+        I1 --> I2 --> I3
+    end
+
+    %% Security & Audit
+    subgraph SECURITY["🔒 Security & Audit"]
+        direction TB
+        J1[OWASP Agentic Top 10<br/>ASI01–ASI10 mapping]
+        J2[Capability Invariant<br/>untrusted input ≠ capability]
+        J3[Audit Chain<br/>scoped sequence + external anchoring]
+        J1 --- J2 --- J3
+    end
+
+    %% Flow connections
+    A8 --> B1
+    B6 --> C1
+    C6 --> D1
+    D4 --> E4
+    E4 --> F1
+    F2 --> G1
+    G5 --> H1
+    H3 --> I1
+
+    %% Styling
+    classDef ingest fill:#1f6feb,stroke:#58a6ff,color:#fff
+    classDef canon fill:#238636,stroke:#3fb950,color:#fff
+    classDef triage fill:#9e6a03,stroke:#d29922,color:#fff
+    classDef branches fill:#8957e5,stroke:#a371f7,color:#fff
+    classDef facts fill:#bf3989,stroke:#db61a2,color:#fff
+    classDef ledger fill:#0e7490,stroke:#22d3ee,color:#fff
+    classDef hub fill:#b91c1c,stroke:#ef4444,color:#fff
+    classDef decision fill:#b45309,stroke:#f59e0b,color:#fff
+    classDef response fill:#166534,stroke:#22c55e,color:#fff
+    classDef security fill:#4c1d95,stroke:#8b5cf6,color:#fff
+
+    class A1,A2,A3,A4,A5,A6,A7,A8 ingest
+    class B1,B2,B3,B4,B5,B6 canon
+    class C1,C2,C3,C4,C5,C6,C7 triage
+    class D1,D2,D3,D4 branches
+    class E1,E2,E3,E4 facts
+    class F1,F2 ledger
+    class G1,G2,G3,G4,G5 hub
+    class H1,H2,H3 decision
+    class I1,I2,I3 response
+    class J1,J2,J3 security
+    </div>
+
+    <div class="legend">
+        <h2>Legend</h2>
+        <div class="legend-grid">
+            <div class="legend-item">
+                <div class="legend-color" style="background: #1f6feb;"></div>
+                <div class="legend-text"><strong>Ingestion</strong> — Webhook intake, auth, replay protection, transactional outbox</div>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #238636;"></div>
+                <div class="legend-text"><strong>Canonicalization</strong> — Multiple representations, UTS #39 features, typed entities</div>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #9e6a03;"></div>
+                <div class="legend-text"><strong>Triage</strong> — 6-tier cache hierarchy, MinHash as candidate generator, prior evidence re-validation</div>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #8957e5;"></div>
+                <div class="legend-text"><strong>Modality Branches</strong> — URL/APK/DOC/IMAGE in hardened artifact sandbox</div>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #bf3989;"></div>
+                <div class="legend-text"><strong>Fact Services</strong> — Threat feeds, registry, resolution → SourceFact</div>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #0e7490;"></div>
+                <div class="legend-text"><strong>Evidence Ledger</strong> — Append-only, typed claims, immutable investigation snapshots</div>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #b91c1c;"></div>
+                <div class="legend-text"><strong>LLM Hub</strong> — Orchestrator, Adversarial ×2, Web Search, CSD/SMD, Auditor</div>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #b45309;"></div>
+                <div class="legend-text"><strong>Decision Engine</strong> — Multi-dimensional, DecisionRecord, convergence</div>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #166534;"></div>
+                <div class="legend-text"><strong>Grounded Response</strong> — Claim-ID anchored, structural grounding, fail-closed templates</div>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #4c1d95;"></div>
+                <div class="legend-text"><strong>Security & Audit</strong> — OWASP ASI01–10, capability invariant, audit chain</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'dark',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis'
+            }
+        });
+    </script>
+</body>
+</html>
