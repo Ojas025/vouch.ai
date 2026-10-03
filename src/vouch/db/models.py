@@ -17,6 +17,9 @@ class Submission(Base):
     sha256_digest: Mapped[str] = mapped_column(String)
     state: Mapped[str] = mapped_column(String(20), server_default="RECEIVED")
 
+    channel: str
+    idempotency_key: str
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now()

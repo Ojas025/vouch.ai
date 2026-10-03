@@ -69,8 +69,4 @@ def verify_telegram_token(body: bytes, token: str, secret_token: str) -> bool:
     if not token:
         return False
 
-    expected = hmac.new(secret_token.encode(), body, hashlib.sha256).hexdigest()
-
-    expected = f"sha256={expected}"
-
-    return hmac.compare_digest(expected, token)
+    return token == secret_token

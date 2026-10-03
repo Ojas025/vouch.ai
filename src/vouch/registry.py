@@ -1,9 +1,0 @@
-class ToolRegistry:
-    def register(self, tool) -> None:
-        ...
-
-    def get(self, name: str):
-        ...
-
-    def definitions(self):
-        ...

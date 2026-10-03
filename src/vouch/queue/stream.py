@@ -8,6 +8,8 @@ import json
 from redis import ResponseError
 from redis.asyncio import Redis, ConnectionPool
 
+from src.vouch.schema import Event
+
 class EventStream:
     def __init__(self, redis_url: str, stream_name: str):
         self.stream_name = stream_name
@@ -15,7 +17,7 @@ class EventStream:
         self.pool = ConnectionPool.from_url(url=redis_url, max_connections=20, decode_responses=True)
         self.client = Redis(connection_pool=self.pool)
 
-    async def produce(self, payload: dict[str, Any]) -> bytes | str:
+    async def produce(self, payload: Event) -> bytes | str:
         """Producer method: appends a task to the event stream."""
         return await self.client.xadd(
                 self.stream_name,
@@ -52,6 +54,9 @@ class EventStream:
             count=count,
             block=block_ms
         )
+
+    async def recover(self, consumer_id: str, min_idle_ms: int, count: int = 10):
+        """"""
 
     async def ack(self, group_name: str, message_id: str):
         """Acknowledge and mark the message as processed, removing it from the pending entries list (PEL)"""

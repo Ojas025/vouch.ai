@@ -4,9 +4,13 @@ import json
 import hashlib
 from dotenv import load_dotenv
 import os
+import uuid
 
+from src.vouch.schema import Event
 from vouch import security
-from vouch.event_stream import EventStream
+from vouch.db.models import Submission
+from vouch.db.session import SessionLocal
+from vouch.queue.event_stream import EventStream
 from vouch.logger import get_logger
 
 load_dotenv()
@@ -53,6 +57,12 @@ async def whatsapp_webhook(request: Request):
     payload = json.loads(body)
 
     # persist to postgresql
+    async with SessionLocal() as session:
+        submission = Submission()
+        session.add(submission)
+
+        await session.commit()
+        await session.refresh(submission)
 
     # push to redis stream``
     stream_id = await stream.produce(payload)
@@ -73,8 +83,21 @@ async def telegram_webhook(request: Request):
     payload = json.loads(body)
 
     # persist to postgresql
+    async with SessionLocal() as session:
+        submission = Submission(
+            channel="telegram",
+            payload=payload
+        )
+        session.add(submission)
+
+        await session.commit()
 
     # enqueue
-    stream_id = await stream.produce(payload)
+    event = Event(
+        idempotency_key=f"telegram:{str(payload["update_id"])}",
+        payload=payload
+    )
+
+    stream_id = await stream.produce(event)
 
     return {"ok": True}
