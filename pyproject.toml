@@ -23,6 +23,19 @@ dependencies = [
 [project.scripts]
 vouch = "vouch:main"
 
+[dependency-groups]
+dev = [
+    "greenlet>=3.0",
+    "httpx>=0.28",
+    "pytest>=9.0",
+    "pytest-asyncio>=1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
 build-backend = "uv_build"
