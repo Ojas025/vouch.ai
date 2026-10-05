@@ -4,9 +4,8 @@ import os
 
 import redis.asyncio as redis
 
-from src.vouch.queue.stream import EventStream
-from src.vouch.queue.handler import EventHandler
-from src.vouch.schema import IncomingMessage
+from vouch.pipeline import run
+from vouch.queue.stream import EventStream
 
 """
 Idempotency - A worker can process -> crash before XACK
@@ -18,9 +17,8 @@ GROUP = "workers"
 CONSUMER = os.getenv("HOSTNAME", "worker-1")
 
 class Worker:
-    def __init__(self, stream: EventStream, handler: EventHandler, consumer_id: str):
+    def __init__(self, stream: EventStream, consumer_id: str):
         self.stream = stream
-        self.handler = handler
         self.consumer_id = consumer_id
 
     async def run(self) -> None:
@@ -39,23 +37,21 @@ class Worker:
             return
 
         try:
-            await self.handler.handle(event.payload)
+            await run(event)
             await self.stream.ack(GROUP, event.id)
         except Exception:
             await redis.delete(event.idempotency_key)
             raise
 
 class WorkerPool:
-    def __init__(self, stream: EventStream, handler: EventHandler, total_workers: int):
+    def __init__(self, stream: EventStream, total_workers: int):
         self.stream = stream
-        self.handler = handler
         self.total_workers = total_workers
 
     async def run(self):
         workers = [
             Worker(
                 consumer_id=f"worker-{i}",
-                handler=self.handler,
                 stream=self.stream
             )
             for i in range(self.total_workers)

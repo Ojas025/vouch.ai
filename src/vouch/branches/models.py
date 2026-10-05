@@ -3,8 +3,8 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field
 
-from src.vouch.preprocessing.models import ExtractedEntity, Modality
-from src.vouch.security.models import EntityRef, Provenance, TrustLevel
+from vouch.preprocessing.models import ExtractedEntity, Modality
+from vouch.security.models import EntityRef, Provenance, TrustLevel
 
 
 class ArtifactRef(BaseModel):

@@ -1,8 +1,8 @@
 from enum import Enum
 from pydantic import BaseModel, Field
 
-from src.vouch.preprocessing.models import Modality
-from src.vouch.security.models import EntityRef
+from vouch.preprocessing.models import Modality
+from vouch.security.models import EntityRef
 
 class TriageTier(int, Enum):
     EXACT = 0

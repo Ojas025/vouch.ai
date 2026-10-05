@@ -181,6 +181,19 @@ wheels = [
 ]
 
 [[package]]
+name = "disarm"
+version = "0.17.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/8f/41fe18d8e05e29c3fde622c1300622b15009b97740e971ab892986f4b383/disarm-0.17.2.tar.gz", hash = "sha256:f5775126e71fd7fb2ed9cdc4b1e888f6330f71d49bf471fac3380fdc7fd97a8b", size = 1036227, upload-time = "2026-09-26T16:05:41.367Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/05/92/666c685b0ed7f24dff719cde60b09fa0f59fc3d927f2413f291fbd76feec/disarm-0.17.2-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:a902a8b7d18c503e41771148ba79ab73da75b5ee72c32932a7b6fd4f6643f0f9", size = 1860132, upload-time = "2026-09-26T16:05:32.551Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/04/69d4123bb69916cb78cd7d1b60885fa3847f29e33cff1154aaee0abb9313/disarm-0.17.2-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:893996ed03c41f2a7af1cbed9cc3eeb721e4c25dbbf34607635fe3b394ba6eb7", size = 1808794, upload-time = "2026-09-26T16:05:34.655Z" },
+    { url = "https://files.pythonhosted.org/packages/49/7e/ef0ac3438e8673b1ac4448a5c9dceb970b6bdf2fc4835ec63499b5825097/disarm-0.17.2-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:0b4c7257d4a1dcd5b44a51668bbaf5c3b1b0aac1f8cee3cbc4a445936c7db398", size = 1911706, upload-time = "2026-09-26T16:05:36.53Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/54/bc42406fd536af6cd3cf79a67bc05d0b45c9d2b117f0b8ed695873d0adfe/disarm-0.17.2-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:6fbe3668a2151d46e3e55a86e54330465d245c9116e3101037f9f2725557cea3", size = 1962102, upload-time = "2026-09-26T16:05:38.153Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/fe/7bcf4ff79bef897a0711d849c3484b7455c1a253b543e89afd5f46374635/disarm-0.17.2-cp310-abi3-win_amd64.whl", hash = "sha256:93835bd9f5b4bdbc425e1ae4a8b902289d1d13bdb28a54791005b9f02ab2fc6c", size = 1877271, upload-time = "2026-09-26T16:05:39.729Z" },
+]
+
+[[package]]
 name = "fastapi"
 version = "0.142.0"
 source = { registry = "https://pypi.org/simple" }
@@ -695,6 +708,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
+    { name = "disarm" },
     { name = "fastapi" },
     { name = "logging" },
     { name = "psycopg" },
@@ -717,6 +731,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.20.0" },
+    { name = "disarm", specifier = ">=0.17.2" },
     { name = "fastapi", specifier = ">=0.142.0" },
     { name = "logging", specifier = ">=0.4.9.6" },
     { name = "psycopg", specifier = ">=3.3.6" },

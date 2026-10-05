@@ -21,18 +21,3 @@ class Provenance(BaseModel):
     sandbox_id: str | None = None
     artifact_sha256: str | None = None # which bytes were read as input
     observed_at: datetime
-
-class EntityType(str, Enum):
-    """Entity extracted from the provided input message"""
-    PHONE = "phone"
-    UPI_VPA = "upi_vpa"
-    DOMAIN = "domain"
-    IFSC = "ifsc"
-    AMOUNT = "amount"
-    URL = "url"
-    APK_PACKAGE = "apk_package"
-    FILE_SHA256 = "file_sha256"
-    BRAND = "brand"
-
-class EntityRef(BaseModel):
-    ...
