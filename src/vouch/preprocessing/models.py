@@ -8,6 +8,7 @@ class Modality(str, Enum):
     APK = "apk"
     DOCUMENT = "document"
     IMAGE = "image"
+    UNKNOWN = "unknown"
 
 
 class EntityType(str, Enum):

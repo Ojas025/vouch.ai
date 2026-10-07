@@ -1,8 +1,12 @@
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Literal, Any, Optional
 from enum import Enum
 from pydantic import BaseModel, Field
 from datetime import datetime
+
+from vouch.branches.models import MediaDownloadMetadata
+from vouch.preprocessing.models import Modality
 
 class Channel(str, Enum):
     WHATSAPP = "whatsapp"
@@ -11,22 +15,24 @@ class Channel(str, Enum):
 
 @dataclass
 class Event:
+    channel: str
     idempotency_key: str
     payload: dict[str, Any]
 
 class AttachmentMetadata(BaseModel):
-    kind: Literal["image", "video", "audio", "voice", "document"]
-    file_id: str
-    file_name: str
-    mime_type: str
-    file_size_bytes: int
+    kind: Modality = Modality.UNKNOWN
+    file_id: str = ""
+    file_name: str = ""
+    mime_type: str = ""
+    file_size_bytes: int = 0
     sha256: str | None = None # filled after fetching attachment
     blob_ref: str | None = None # filled after fetching attachment
+    download_metadata: MediaDownloadMetadata | None = None
+    file_path: Path | None = None
 
 class IncomingMessage(BaseModel):
     submission_id: str
     channel: Channel
-    delivery_id: str
     provider: str
     message_id: str
     text: str

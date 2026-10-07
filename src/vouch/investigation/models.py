@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from src.vouch.security.models import EntityRef, Provenance, TrustLevel
+from vouch.security.models import EntityRef, Provenance, TrustLevel
 
 
 class ThreatClass(str, Enum):
@@ -57,7 +57,7 @@ class Agent(BaseModel):
 
 class ToolRequest(BaseModel):
     tool_name: str
-    arguments: dict[str, str | int | float | bool],
+    arguments: dict[str, str | int | float | bool]
     reason_claim_ids: list[str] = Field(default_factory=list)
 
 class MessageType(str, Enum):
