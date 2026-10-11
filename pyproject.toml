@@ -12,6 +12,7 @@ dependencies = [
     "androguard>=4.1.4",
     "disarm>=0.17.2",
     "fastapi>=0.142.0",
+    "httpx>=0.28",
     "logging>=0.4.9.6",
     "psycopg>=3.3.6",
     "pydantic>=2.13.5",
@@ -28,7 +29,6 @@ vouch = "vouch:main"
 [dependency-groups]
 dev = [
     "greenlet>=3.0",
-    "httpx>=0.28",
     "pytest>=9.0",
     "pytest-asyncio>=1.0",
 ]

@@ -1298,6 +1298,7 @@ dependencies = [
     { name = "androguard" },
     { name = "disarm" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "logging" },
     { name = "psycopg" },
     { name = "pydantic" },
@@ -1311,7 +1312,6 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "greenlet" },
-    { name = "httpx" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
@@ -1322,6 +1322,7 @@ requires-dist = [
     { name = "androguard", specifier = ">=4.1.4" },
     { name = "disarm", specifier = ">=0.17.2" },
     { name = "fastapi", specifier = ">=0.142.0" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "logging", specifier = ">=0.4.9.6" },
     { name = "psycopg", specifier = ">=3.3.6" },
     { name = "pydantic", specifier = ">=2.13.5" },
@@ -1335,7 +1336,6 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "greenlet", specifier = ">=3.0" },
-    { name = "httpx", specifier = ">=0.28" },
     { name = "pytest", specifier = ">=9.0" },
     { name = "pytest-asyncio", specifier = ">=1.0" },
 ]
