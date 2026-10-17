@@ -1,0 +1,20 @@
+# Keep the build context to what the image actually needs: the lockfile, the
+# package, and the readme uv_build copies into the wheel.
+.git
+.github
+.venv
+.env
+.pytest_cache
+.superpowers
+graphify-out
+docker
+docs
+tests
+logs
+src/vouch/downloads
+
+__pycache__
+*.py[cod]
+*.egg-info
+build
+dist

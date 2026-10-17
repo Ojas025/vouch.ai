@@ -1,27 +1,194 @@
+name: vouch
+
+# App containers read the repo .env and then override the localhost URLs it
+# holds with the in-network service names used here.
+x-app-env: &app-env
+  POSTGRES_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mypassword}@database:5432/vouch
+  REDIS_URL: redis://redis:6379/0
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  # Forced to HTTP: the FastAPI instrumentation refuses to auto-configure over
+  # gRPC, so the .env value of grpc would abort application startup.
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  PYROSCOPE_SERVER_ADDRESS: http://pyroscope:4040
+  VOUCH_LOG_DIR: /app/logs
+
+x-app-build: &app-build
+  context: ..
+  dockerfile: docker/Dockerfile
+  target: runtime
+
+# Declared first so it is started before anything that reads the schema.
 services:
-  redis:
-    image: docker.io/library/redis:7
-    container_name: redis
+  # One-shot schema migration. Nothing declares a dependency on it: podman-compose
+  # cannot depend on a container that has already exited, and the api does not
+  # touch the schema until a webhook arrives.
+  migrate:
+    build: *app-build
+    image: vouch-app:runtime
+    env_file: ../.env
+    environment:
+      <<: *app-env
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    healthcheck:
+      # Inherited from the image and would probe the api port that never opens.
+      disable: true
+    depends_on:
+      database:
+        condition: service_healthy
+
+  api:
+    build: *app-build
+    image: vouch-app:runtime
+    env_file: ../.env
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: vouch-api
     ports:
-      - 6379:6379
+      - 127.0.0.1:8000:8000
     volumes:
-      - redis-data:/data
+      - vouch-logs:/app/logs
+      - vouch-downloads:/app/.venv/lib/python3.13/site-packages/vouch/downloads
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # The collector image is built FROM scratch: no shell, so no healthcheck.
+      otel-collector:
+        condition: service_started
+    restart: unless-stopped
+
+  # Consumes events:stream. Left unnamed so `--scale worker=N` works.
+  worker:
+    build: *app-build
+    image: vouch-app:runtime
+    env_file: ../.env
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: vouch-worker
+    command: ["python", "-m", "vouch.worker"]
+    healthcheck:
+      disable: true
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Drains the transactional outbox into events:stream. Retries until migrate
+  # has created the outbox table, then runs continuously.
+  relay:
+    build: *app-build
+    image: vouch-app:runtime
+    env_file: ../.env
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: vouch-relay
+    command: ["python", "-m", "vouch.api.outbox"]
+    healthcheck:
+      disable: true
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  otel-collector:
+    image: docker.io/otel/opentelemetry-collector-contrib:0.163.1
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - 127.0.0.1:4317:4317
+      - 127.0.0.1:4318:4318
+      - 127.0.0.1:8889:8889
+      - 127.0.0.1:13133:13133
+    restart: unless-stopped
+
+  tempo:
+    image: docker.io/grafana/tempo:3.1.0
+    command: ["-config.file=/etc/tempo/config.yml", "-target=all"]
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo/config.yml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - 127.0.0.1:3200:3200
+    restart: unless-stopped
+
+  prometheus:
+    image: docker.io/prom/prometheus:v3.13.4
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - 127.0.0.1:9090:9090
+    restart: unless-stopped
+
+  pyroscope:
+    image: docker.io/grafana/pyroscope:1.21.1
+    command: ["-config.file=/etc/pyroscope/config.yaml"]
+    volumes:
+      - ./observability/pyroscope.yaml:/etc/pyroscope/config.yaml:ro
+      - pyroscope-data:/data
+    ports:
+      - 127.0.0.1:4040:4040
+    restart: unless-stopped
+
+  grafana:
+    image: docker.io/grafana/grafana:13.2.4
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - 127.0.0.1:3000:3000
     restart: unless-stopped
 
   database:
-    image: "docker.io/library/postgres:latest"
-    ports:
-      - 5432:5432
-    restart: unless-stopped
+    image: docker.io/library/postgres:18-trixie
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: mypassword
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mypassword}
       POSTGRES_DB: vouch
     volumes:
-      - pgdata:/var/lib/postgresql/
+      - pgdata:/var/lib/postgresql
+    # Not published: the app reaches it over the compose network, and a host
+    # port here would collide with a locally running server.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d vouch"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: docker.io/library/redis:8-alpine
+    # Without AOF a restart drops every queued event still in the stream.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - redis-data:/data
+    # Not published: the app reaches it over the compose network, and a host
+    # port here would collide with a locally running Redis.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
 
 volumes:
-  redis-data:
-    driver: local
   pgdata:
-    driver: local
+  redis-data:
+  tempo-data:
+  prometheus-data:
+  pyroscope-data:
+  grafana-data:
+  vouch-logs:
+  vouch-downloads:
