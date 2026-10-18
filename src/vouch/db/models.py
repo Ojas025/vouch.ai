@@ -57,9 +57,7 @@ class OutboxEvent(Base):
     idempotency_key: Mapped[str] = mapped_column(String(128))
     payload: Mapped[dict] = mapped_column(JSONB)
 
-    # W3C trace context of the request that created this row. Carried so the
-    # worker continues that request's trace; the relay's own span would trace
-    # the relay instead. Null on rows created before it existed.
+    # W3C context of the request that created this row; null on older rows.
     trace_context: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     status: Mapped[str] = mapped_column(

@@ -5,7 +5,7 @@ import os
 from vouch.logger import configure_logging, get_logger
 from vouch.observability.context import bind_correlation
 from vouch.observability.propagation import extract_trace_context
-from vouch.observability.spans import SPAN_JOB_PROCESS, span
+from vouch.observability.spans import ATTR_JOB_IDEMPOTENCY_KEY, SPAN_JOB_PROCESS, span
 from vouch.queue.stream import EventStream
 
 """
@@ -42,8 +42,6 @@ class Worker:
         event = json.loads(fields["data"])
         idempotency_key = event["idempotency_key"]
 
-        # Empty for legacy events and for anything published without a trace,
-        # in which case job.process starts a new root span.
         parent = extract_trace_context(event)
 
         claimed = await self.stream.client.set(
@@ -75,10 +73,9 @@ class Worker:
         )
 
         try:
-            # payload is the raw provider message and is never logged.
             with span(
                 SPAN_JOB_PROCESS,
-                {"vouch.job.idempotency_key": idempotency_key},
+                {ATTR_JOB_IDEMPOTENCY_KEY: idempotency_key},
                 context=parent,
             ):
                 with bind_correlation(job_id=idempotency_key):

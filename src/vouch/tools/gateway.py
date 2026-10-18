@@ -32,11 +32,7 @@ class ToolGateway:
         def _failed_response(reason: ToolFailureReason, elapsed_ms: float = 0.0):
             return ToolCallResponse(is_error=True, failure_reason=reason, tool_invocation_id=tool_invocation_id, elapsed_ms=elapsed_ms)
 
-        # Audit invocation.
-        # ``_emit`` swallows everything: it is called from inside the
-        # except-handlers below, where a raise would replace the tool result or
-        # the pending cancellation, and from the success path after the finally
-        # that binds elapsed_ms. Nothing here may influence the return value.
+        # Swallows everything: it runs inside the except-handlers below.
         def _emit(event: AuditEvent, **fields):
             try:
                 auditor.emit(
@@ -68,8 +64,6 @@ class ToolGateway:
         # Check tool use permissions
         decision = policy.authorize(context, req.tool_name)
 
-        # Emitted strictly after the decision, never between here and the
-        # branch below: an audit write must not be able to influence it.
         _emit(
             AuditEvent.TOOL_CALL_AUTHORIZATION_DECIDED,
             tool_side_effects=tool.side_effects,
@@ -93,8 +87,7 @@ class ToolGateway:
 
         # Check investigation budget
 
-        # Last point at which the caller is told dispatch is happening, and the
-        # first at which dispatched=True is truthful.
+        # First point at which dispatched=True is truthful.
         _emit(AuditEvent.TOOL_CALL_EXECUTION_STARTED, tool_side_effects=tool.side_effects, tool_version=tool.version, dispatched=True)
 
         logger.debug(
@@ -107,9 +100,6 @@ class ToolGateway:
             },
         )
 
-        # Started after the audit work above so elapsed_ms, which the caller
-        # receives, stays a measurement of the tool rather than of the
-        # instrumentation.
         started = time.monotonic()
 
         try:
@@ -123,10 +113,7 @@ class ToolGateway:
                     ATTR_ATTEMPT_NO: 1,
                 },
             ):
-                # Re-baselined inside the span so elapsed_ms, which the caller
-                # receives, measures the tool call and not the instrumentation
-                # wrapped around it. `started` is already bound above, so this
-                # stays safe if entering the span ever raises.
+                # Re-baselined so elapsed_ms measures the tool, not the span.
                 started = time.monotonic()
                 response = await asyncio.wait_for(self.registry.invoke(req.tool_name, validated_args), tool.timeout_sec)
         except asyncio.CancelledError:

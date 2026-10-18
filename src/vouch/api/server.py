@@ -60,8 +60,7 @@ async def create_entry(session, key: str, payload: dict[str, Any], payload_diges
 
     await session.commit()
 
-    # Only identifiers and a size. The payload is the provider's raw message and
-    # the digest is a stable fingerprint of it, so neither is logged.
+    # Identifiers and a size only: payload and digest are provider content.
     logger.info(
         "submission persisted",
         extra={

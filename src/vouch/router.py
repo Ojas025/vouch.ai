@@ -11,7 +11,13 @@ from vouch.ingestion import AttachmentMetadata, Channel, IncomingMessage, MediaD
 from vouch.ledger.models import EvidenceDraft
 from vouch.logger import get_logger
 from vouch.observability.context import bind_correlation
-from vouch.observability.spans import ATTR_MODALITY, SPAN_INVESTIGATION_FANOUT, span
+from vouch.observability.spans import (
+    ATTR_INVESTIGATION_ID,
+    ATTR_JOB_ID,
+    ATTR_MODALITY,
+    SPAN_INVESTIGATION_FANOUT,
+    span,
+)
 from vouch.preprocessing.models import CanonicalMessage, Modality
 from vouch.utils import delete_from_path, retry
 
@@ -194,12 +200,10 @@ async def route(msg: IncomingMessage, canonical_msg: CanonicalMessage) -> RouteP
             investigation_id = "inv_" + f"{msg.channel}:{msg.submission_id}"
             job_id = "job_" + str(uuid.uuid4())
 
-            # The span is not a try/except of its own: the one at the end of
-            # this function already terminates and reports the same exception.
             with span(SPAN_INVESTIGATION_FANOUT, {
-                "vouch.job.id": job_id,
+                ATTR_JOB_ID: job_id,
                 ATTR_MODALITY: media.kind.value,
-                "vouch.investigation.id": investigation_id,
+                ATTR_INVESTIGATION_ID: investigation_id,
             }):
                 with bind_correlation(investigation_id=investigation_id, job_id=job_id):
                     logger.info(

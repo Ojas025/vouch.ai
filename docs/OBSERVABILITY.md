@@ -21,7 +21,7 @@ second logging configuration and no second log pipeline.
 | `stack` | record | Only when `stack_info` is set. |
 | `event` | call site via `extra` | Stable dotted event name. |
 | `component` | call site via `extra` | Owning module. |
-| `request_id`, `investigation_id`, `job_id`, `channel` | record factory | From `ContextVar`s. See below. |
+| `investigation_id`, `job_id` | record factory | From `ContextVar`s. See below. |
 | `trace_id`, `span_id`, `trace_sampled` | record factory | Absent when no span is active — never `"0"`. |
 | everything else | call site via `extra` | Sanitised, bounded, redacted by key. |
 
@@ -37,14 +37,14 @@ record creation time**, on the emitting thread. The JSON formatter runs later on
 the `QueueListener` thread, which has no access to the emitting task's context —
 reading them there would silently yield `null`.
 
-These names are **reserved**. `logging.Logger.makeRecord` raises `KeyError` if a
-call site passes one through `extra=`, so use `bind_correlation` instead.
-`RESERVED_FACTORY_FIELDS` lists them.
+These names, and the trace fields, are **reserved**: `logging.Logger.makeRecord`
+raises `KeyError` if a call site passes one through `extra=`, so use
+`bind_correlation` instead.
 
 ### Sanitisation and redaction
 
 `vouch.observability.sanitize` bounds strings (512), collections (20) and
-nesting depth (4), strips CR/LF and other control characters so a value cannot
+nesting depth (3), strips CR/LF and other control characters so a value cannot
 forge a log line, and replaces values whose key matches a credential or raw
 content fragment with `[REDACTED]`.
 
@@ -147,11 +147,6 @@ already emits those in the api container.
 `vouch.`-prefixed because there is no semantic convention for an investigation
 engine. Defined in `vouch.observability.spans` as constants. Only identifiers
 and enums — never prompts, completions, arguments or results.
-
-The LLM span uses OTel's GenAI attribute names (`gen_ai.operation.name`,
-`gen_ai.request.model`). In the pinned version those live only under
-`opentelemetry.semconv._incubating.attributes`, a private and unstable import
-path, so the names are spelled out as constants instead.
 
 ## Trace propagation
 

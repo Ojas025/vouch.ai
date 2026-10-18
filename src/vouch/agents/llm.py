@@ -8,12 +8,7 @@ from langchain_litellm import ChatLiteLLM
 from litellm import AsyncIterator
 from vouch.agents.models import LLMProfile
 from vouch.logger import get_logger
-from vouch.observability.spans import (
-    GEN_AI_OPERATION_NAME,
-    GEN_AI_REQUEST_MODEL,
-    SPAN_LLM_GENERATE,
-    span,
-)
+from vouch.observability.spans import ATTR_LLM_MODEL, SPAN_LLM_GENERATE, span
 
 logger = get_logger(__name__)
 
@@ -48,12 +43,10 @@ class LLMClient:
         return self._llm.with_structured_output(schema, **kwargs)
 
     async def ainvoke(self, messages: Any, **kwargs: Any):
-        # Only the profile's own safe attributes are recorded. `messages`,
-        # `kwargs` and `params` hold prompts, conversation history and the
-        # resolved api_key, and must never reach a span or a log.
+        # `messages`, `kwargs` and `params` hold prompts and the api_key.
         with span(
             SPAN_LLM_GENERATE,
-            {GEN_AI_OPERATION_NAME: "chat", GEN_AI_REQUEST_MODEL: self.profile.name},
+            {ATTR_LLM_MODEL: self.profile.name},
         ):
             try:
                 return await self._llm.ainvoke(messages, **kwargs)

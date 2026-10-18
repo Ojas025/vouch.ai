@@ -36,9 +36,7 @@ async def publish_outbox(session, stream: EventStream):
             payload=row.payload,
         )
 
-        # The originating request's context, captured when the row was written.
-        # Passing the relay's own context here would trace the relay instead.
-        # Legacy rows carry none, and are published exactly as before.
+        # The originating context, captured at write time. Legacy rows carry none.
         carrier = getattr(row, "trace_context", None)
         if isinstance(carrier, dict) and carrier:
             await stream.produce(event, trace_context=carrier)

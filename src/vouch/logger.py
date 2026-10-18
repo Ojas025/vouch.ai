@@ -48,34 +48,26 @@ BACKUP_COUNT = 3
 QUEUE_HANDLER_NAME = "vouch_queue"
 LISTENER_ATTR = "_vouch_listener"
 
-#: Bumped whenever the emitted field set changes shape, so a log consumer can
-#: branch on it instead of guessing from the keys it happens to find.
+#: Bumped on any change to the emitted field set.
 SCHEMA_VERSION = 1
 
-#: Security-relevant records travel on their own logger so they can be routed,
-#: retained and levelled independently of operational noise.
+#: Security-relevant records, routed and levelled independently of noise.
 AUDIT_LOGGER_NAME = "vouch.audit"
 
-#: Independent of VOUCH_LOG_LEVEL: an audit trail that vanishes because an
-#: operator raised the application log level is not an audit trail.
+#: Independent of VOUCH_LOG_LEVEL, so raising it cannot erase the trail.
 AUDIT_LOGGER_LEVEL = "INFO"
 
 _lock = threading.Lock()
 
 
 class _PreservingQueueHandler(logging.handlers.QueueHandler):
-    """Queue handler that hands the record downstream intact.
+    """Hands the record downstream intact.
 
-    The stock ``prepare`` runs the record through this handler's own formatter,
-    which replaces ``msg`` with the already-rendered console line, and then
-    nulls ``exc_info`` — so downstream handlers see a double-prefixed message
-    and no traceback at all. Rendering ``getMessage()`` instead keeps the
-    message clean and the traceback available to the JSON formatter.
-
-    ``record.getMessage()`` is used rather than ``Formatter.format`` because
-    ``format`` assigns ``record.exc_text`` as a side effect, and the copy that
-    travels through the queue would then carry a stale traceback that the
-    downstream handler appends a second time.
+    Stock ``prepare`` renders through this handler's formatter, baking the
+    console prefix into ``msg``, and nulls ``exc_info``. Using ``getMessage()``
+    rather than ``Formatter.format`` also matters: ``format`` assigns
+    ``exc_text`` as a side effect, so the queued copy would carry a stale
+    traceback that the downstream handler appends a second time.
     """
 
     def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
@@ -90,15 +82,13 @@ class _JsonFormatter(logging.Formatter):
     """Render records as single-line JSON for log aggregation.
 
     Fields already on the record are never dropped, so the ``event`` /
-    ``component`` / ``reason_code`` / ``error_category`` extras that call sites
-    have always passed through ``extra=`` keep flowing. Sanitisation and the
-    UTC timestamp are applied here rather than at the call site, so every
-    record crossing this formatter gets the same treatment.
+    ``component`` / ``reason_code`` extras call sites pass keep flowing.
     """
 
+    # Envelope names are reserved so extra={"level": ...} cannot overwrite them.
     _RESERVED = frozenset(
         logging.LogRecord("", 0, "", 0, "", (), None).__dict__
-    ) | {"asctime", "message", "taskName"}
+    ) | {"asctime", "message", "taskName", "schema_version", "timestamp", "level", "logger"}
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
@@ -113,8 +103,7 @@ class _JsonFormatter(logging.Formatter):
             "message": sanitize(record.getMessage()),
         }
 
-        # Anything the caller attached via ``extra=``, plus what the record
-        # factory layered on (trace and correlation context).
+        # Whatever the caller attached, plus what the record factory layered on.
         for key, value in record.__dict__.items():
             if key not in self._RESERVED and not key.startswith("_"):
                 payload[key] = sanitize(value)
@@ -158,11 +147,7 @@ def _build_config(level: int, log_dir: Path, log_queue: queue.SimpleQueue) -> di
         "handlers": {
             QUEUE_HANDLER_NAME: {
                 "()": _PreservingQueueHandler,
-                # NOTSET, and this must stay paired with the vouch.audit entry
-                # below. A logger's own effective level is checked before any
-                # handler sees the record, so VOUCH_LOG_LEVEL cannot suppress
-                # vouch.audit's INFO records — but this handler's level would.
-                # Both halves are required or the audit trail silently vanishes.
+                # Paired with the vouch.audit level below; either alone silently drops audit records.
                 "level": "NOTSET",
                 "queue": log_queue,
             },
@@ -192,8 +177,7 @@ def _build_config(level: int, log_dir: Path, log_queue: queue.SimpleQueue) -> di
             "uvicorn": {"level": "INFO", "propagate": True},
             "uvicorn.error": {"level": "INFO", "propagate": True},
             "uvicorn.access": {"level": "INFO", "propagate": True},
-            # Explicit level defeats inheritance from root, which is what lets
-            # the queue handler's NOTSET deliver audit records.
+            # Explicit level defeats inheritance from root, so NOTSET delivers it.
             AUDIT_LOGGER_NAME: {"level": AUDIT_LOGGER_LEVEL, "propagate": True},
         },
     }
@@ -226,8 +210,6 @@ def configure_logging(
         if _is_configured():
             return
 
-        # Installed before dictConfig so records emitted during configuration
-        # already carry their trace context.
         install_record_factory()
 
         if log_dir is None:
@@ -271,8 +253,7 @@ def shutdown_logging() -> None:
             listener.stop()
             setattr(handler, LISTENER_ATTR, None)
 
-    # Only reverts a factory this module installed, so a caller that never
-    # configured logging leaves whatever the process already had in place.
+    # Only reverts a factory this module installed.
     restore_record_factory()
 
 

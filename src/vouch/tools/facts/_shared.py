@@ -243,8 +243,7 @@ async def call(name: str, method: str, url: str, **kw) -> httpx.Response:
             )
 
         if attempt < MAX_ATTEMPTS - 1:
-            # The upstream name only. `url` embeds the indicator being looked
-            # up, which came out of a user's forwarded message.
+            # Upstream name only: `url` embeds the queried indicator.
             logger.warning(
                 "fact source retrying",
                 extra={
@@ -357,8 +356,7 @@ async def lookup(
         duration_ms = (time.monotonic() - t0) * 1000
         status = FactLookupStatus.HIT if facts else FactLookupStatus.MISS
 
-        # `errors` holds str(exc) from httpx, which embeds the queried URL, so
-        # only the count is recorded.
+        # `errors` embeds the queried URL via httpx str(exc); count only.
         logger.info(
             "fact lookup completed",
             extra={

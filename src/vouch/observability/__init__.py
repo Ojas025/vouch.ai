@@ -1,6 +1,5 @@
-"""Observability building blocks for Vouch.
+"""Observability building blocks: correlation, sanitisation, spans and auditing.
 
-Kept separate from :mod:`vouch.logger` so the logger module stays a single
-concern (handler topology) while correlation, sanitisation, spans and the
-security audit trail each own one module.
+Kept separate from :mod:`vouch.logger`, which stays a single concern (handler
+topology), so each piece here owns one responsibility.
 """
