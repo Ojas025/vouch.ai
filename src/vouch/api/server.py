@@ -8,13 +8,11 @@ from dotenv import load_dotenv
 import os
 import uuid
 
-from vouch.ingestion.models import Event
-from vouch.queue.stream import EventStream
-from vouch.security.security import verify_telegram_token, verify_whatsapp_signature
-from vouch import security
 from vouch.db.models import OutboxEvent, Submission
 from vouch.db.session import SessionLocal
 from vouch.logger import configure_logging, get_logger, shutdown_logging
+from vouch.security import verify_telegram_token, verify_whatsapp_signature
+from vouch.stream import EventStream
 
 load_dotenv()
 

@@ -63,7 +63,9 @@ ContextItem(
 """
 
 def verify_whatsapp_signature(body: bytes, signature: str, app_secret: str) -> bool:
-    if not signature:
+    # An unconfigured secret must fail fast: otherwise an empty app_secret
+    # produces a "valid" HMAC that any caller can reproduce.
+    if not signature or not app_secret:
         return False
 
     expected = hmac.new(app_secret.encode(), body, hashlib.sha256).hexdigest()
@@ -73,10 +75,10 @@ def verify_whatsapp_signature(body: bytes, signature: str, app_secret: str) -> b
     return hmac.compare_digest(expected, signature)
 
 def verify_telegram_token(body: bytes, token: str, secret_token: str) -> bool:
-    if not token:
+    if not token or not secret_token:
         return False
 
-    return token == secret_token
+    return hmac.compare_digest(token, secret_token)
 
 # --- Trust & identity models (moved from security/models.py) ---
 

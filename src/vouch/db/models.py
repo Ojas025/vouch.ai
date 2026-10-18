@@ -54,7 +54,7 @@ class OutboxEvent(Base):
     )
 
     channel: Mapped[str] = mapped_column(String(20))
-    idempotency_key: Mapped[str] = mapped_column(String(30))
+    idempotency_key: Mapped[str] = mapped_column(String(128))
     payload: Mapped[dict] = mapped_column(JSONB)
 
     status: Mapped[str] = mapped_column(

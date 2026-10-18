@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from vouch.investigation import ThreatClass
+from vouch.agents.models import ThreatClass
 
 
 class RiskLevel(int, Enum):

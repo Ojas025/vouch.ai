@@ -75,6 +75,13 @@ def _adapt_whatsapp(raw_payload: dict[str, Any]) -> IncomingMessage:
         text = caption
 
     context = msg.get("context", {})
+    # A forwarded message carries its origin in the context block; dropping it
+    # would erase the single most valuable provenance field for an investigator.
+    forwarded_origin = (
+        str(context["from"])
+        if context.get("from") and (context.get("forwarded") or context.get("frequently_forwarded"))
+        else None
+    )
     sent_at = datetime.fromtimestamp(int(msg["timestamp"]), tz=timezone.utc)
 
     return IncomingMessage(
@@ -90,7 +97,7 @@ def _adapt_whatsapp(raw_payload: dict[str, Any]) -> IncomingMessage:
         sender_id=msg["from"],
         recipient_id=metadata["display_phone_number"],
         gateway_account_id=int(metadata["phone_number_id"]),
-        forwarded_origin=None,
+        forwarded_origin=forwarded_origin,
         is_frequently_forwarded=bool(context.get("frequently_forwarded", False)),
         payload_digest=hashlib.sha256(
             json.dumps(raw_payload, sort_keys=True).encode("utf-8")
@@ -181,7 +188,17 @@ def _adapt_telegram(raw_payload: dict[str, Any]) -> IncomingMessage:
 
 
 def adapt(event: Event) -> IncomingMessage:
+    """Dispatch on the event's channel.
+
+    Anything that is not a supported provider channel is rejected loudly:
+    falling through to the Telegram parser would turn an unknown channel into
+    an opaque KeyError (or silently misparse a payload that happens to carry
+    the same keys).
+    """
     if event.channel == "whatsapp":
         return _adapt_whatsapp(event.payload)
 
-    return _adapt_telegram(event.payload)
+    if event.channel == "telegram":
+        return _adapt_telegram(event.payload)
+
+    raise ValueError(f"unsupported channel: {event.channel}")

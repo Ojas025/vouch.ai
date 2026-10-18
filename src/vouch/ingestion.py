@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Literal, Any, Optional
+from typing import List, Any, Optional
 from enum import Enum
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -26,8 +26,6 @@ class AttachmentMetadata(BaseModel):
     file_size_bytes: int = 0
     sha256: str | None = None # filled after fetching attachment
     blob_ref: str | None = None # filled after fetching attachment
-    # MediaDownloadMetadata is declared below in this module. Referencing it as a
-    # forward string; AttachmentMetadata.model_rebuild() runs once both classes exist.
     download_metadata: "MediaDownloadMetadata | None" = None
     file_path: Path | None = None
 

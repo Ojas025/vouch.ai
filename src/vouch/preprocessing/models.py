@@ -8,6 +8,11 @@ class Modality(str, Enum):
     APK = "apk"
     DOCUMENT = "document"
     IMAGE = "image"
+    # Media kinds the adapters can produce from provider payloads; without
+    # these members an audio/video/voice attachment fails model validation.
+    AUDIO = "audio"
+    VIDEO = "video"
+    VOICE = "voice"
     UNKNOWN = "unknown"
 
 
