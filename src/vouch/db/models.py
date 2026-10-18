@@ -1,21 +1,20 @@
-from datetime import datetime, timezone
+from datetime import datetime
 import uuid
 
-from sqlalchemy import DateTime, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql.sqltypes import UUID
 from sqlalchemy.dialects.postgresql import JSONB
 
 from vouch.db.base import Base
+from vouch.utils import uuid7
 
-
-def _uuid7() -> uuid.UUID:
-    """Time-ordered UUID stand-in. ``uuid.uuid7`` is Python 3.14+; this project is on 3.13.
-
-    Only the import-time blocker is fixed here - the value semantics (ordering,
-    version/variant bits) are deliberately left alone pending a real decision.
-    """
-    return uuid.uuid4()
+"""
+    Submission (case file)
+        Investigation xN | why: "initial", "re-evidence", "manual"
+            BranchJob xN | per modality, per artifact
+                attempt xN | retry, wall-clock, sandbox violation
+"""
 
 class Submission(Base):
     __tablename__ = "submissions"
@@ -24,7 +23,7 @@ class Submission(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
-        default=_uuid7,
+        default=uuid7,
     )
 
     payload: Mapped[str] = mapped_column(Text)
@@ -51,7 +50,7 @@ class OutboxEvent(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
-        default=_uuid7,
+        default=uuid7,
     )
 
     channel: Mapped[str] = mapped_column(String(20))
@@ -70,4 +69,61 @@ class OutboxEvent(Base):
 
     published_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True)
+    )
+
+class Investigations(Base):
+    __tablename__ = "investigations"
+
+    inv_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid7,
+    )
+
+    submission_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("submissions.id"),
+        index=True,
+    )
+
+    reason: Mapped[str] = mapped_column(String(20))  # "initial" | "re-evidence" | "manual"
+    state: Mapped[str] = mapped_column(String(20), server_default="RECEIVED")
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+class BranchJob(Base):
+    __tablename__ = "branch_jobs"
+
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid7,
+    )
+
+    investigation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("investigations.inv_id"),
+        index=True,
+    )
+
+    modality: Mapped[str] = mapped_column(String(20))
+    artifact_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sandbox_profile: Mapped[str] = mapped_column(String(50))
+
+    attempt_no: Mapped[int] = mapped_column(default=1)
+    state: Mapped[str] = mapped_column(String(20), server_default="QUEUED")
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
     )

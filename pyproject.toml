@@ -16,6 +16,7 @@ dependencies = [
     "greenlet>=3.5.6",
     "httpx>=0.28",
     "langchain>=1.4.5",
+    "langchain-litellm>=0.11.1",
     "langchain-ollama>=1.1.0",
     "logging>=0.4.9.6",
     "opentelemetry-distro>=0.66b1",

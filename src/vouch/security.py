@@ -2,6 +2,13 @@ from cmath import exp
 import hashlib
 import hmac
 
+from typing import Literal
+from enum import Enum
+from pydantic import BaseModel
+from datetime import datetime
+
+from vouch.preprocessing.models import EntityType
+
 """
 # Tool Use
 
@@ -70,3 +77,29 @@ def verify_telegram_token(body: bytes, token: str, secret_token: str) -> bool:
         return False
 
     return token == secret_token
+
+# --- Trust & identity models (moved from security/models.py) ---
+
+class EntityRef(BaseModel):
+    """A normalized reference to a typed entity extracted from a submission."""
+    type: EntityType
+    value: str  # normalized_value from ExtractedEntity
+
+class TrustLevel(str, Enum):
+    SYSTEM = "system" # system metadata
+    DETERMINISTIC = "deterministic" # deterministic code generated artifacts
+    EXTERNAL_SOURCE = "external_source"
+    UNTRUSTED_ARTIFACT = "untrusted_artifact" # anything read out of browser/apk/doc/image
+    MODEL_OUTPUT = "model_output" # LLM-produced, may only exist as a Claim
+
+class Provenance(BaseModel):
+    """Who produced this, with what tool, from which bytes"""
+    producer_type: Literal["AGENT", "SERVICE", "BRANCH"]
+    producer_id: str
+    tool_name: str
+    tool_version: str
+    prompt_version: str | None = None
+    model_id: str | None = None
+    sandbox_id: str | None = None
+    artifact_sha256: str | None = None # which bytes were read as input
+    observed_at: datetime

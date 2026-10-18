@@ -11,7 +11,7 @@ Normalizes raw input user message for handling unicode trickeries and a stable c
 import unicodedata
 
 from disarm import Text
-from vouch.ingestion.models import IncomingMessage
+from vouch.ingestion import IncomingMessage
 from vouch.preprocessing.entities import extract_entities
 from vouch.preprocessing.models import CanonicalMessage, TextForms
 

@@ -5,7 +5,6 @@ from enum import Enum
 from pydantic import BaseModel, Field
 from datetime import datetime
 
-from vouch.branches.models import MediaDownloadMetadata
 from vouch.preprocessing.models import Modality
 
 class Channel(str, Enum):
@@ -27,8 +26,20 @@ class AttachmentMetadata(BaseModel):
     file_size_bytes: int = 0
     sha256: str | None = None # filled after fetching attachment
     blob_ref: str | None = None # filled after fetching attachment
-    download_metadata: MediaDownloadMetadata | None = None
+    # MediaDownloadMetadata is declared below in this module. Referencing it as a
+    # forward string; AttachmentMetadata.model_rebuild() runs once both classes exist.
+    download_metadata: "MediaDownloadMetadata | None" = None
     file_path: Path | None = None
+
+class MediaDownloadMetadata(BaseModel):
+    url: str = ""
+    mime_type: str = ""
+    sha256: str = ""
+    file_size: int = 0
+    id: str = ""
+
+# Resolve the forward reference now that MediaDownloadMetadata is defined.
+AttachmentMetadata.model_rebuild()
 
 class IncomingMessage(BaseModel):
     submission_id: str

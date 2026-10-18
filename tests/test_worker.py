@@ -1,4 +1,4 @@
-"""Unit tests for vouch.worker.worker.
+"""Unit tests for vouch.worker.
 
 Worker.process() and Worker.run() are async, so every test is marked. The
 Redis client, EventStream and EventHandler are all replaced: no broker, no
@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from vouch.worker import worker as worker_module
-from vouch.worker.worker import GROUP, Worker, WorkerPool
+import vouch.worker as worker_module
+from vouch.worker import GROUP, Worker, WorkerPool
 
 
 @pytest.fixture

@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from vouch.security.models import EntityRef, Provenance, TrustLevel
+from vouch.security import EntityRef, Provenance, TrustLevel
 
 
 class ThreatClass(str, Enum):

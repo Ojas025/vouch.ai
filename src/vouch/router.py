@@ -2,16 +2,26 @@ import hashlib
 from pathlib import Path
 import uuid
 from fastapi import HTTPException
+from pydantic import BaseModel
 import requests
 import httpx
 
-from vouch.branches.apk import analyze_apk
-from vouch.branches.models import BranchJob, MediaDownloadMetadata
 from vouch.config import settings
-from vouch.ingestion.models import AttachmentMetadata, Channel, IncomingMessage
+from vouch.ingestion import AttachmentMetadata, Channel, IncomingMessage, MediaDownloadMetadata
+from vouch.ledger.models import EvidenceDraft
 from vouch.logger import get_logger
 from vouch.preprocessing.models import CanonicalMessage, Modality
 from vouch.utils import delete_from_path, retry
+
+class BranchJob(BaseModel):
+    job_id: str
+    investigation_id: str
+    modality: Modality
+    artifact: AttachmentMetadata | None = None
+    attempt_no: int = 1
+
+async def analyze_apk(job: BranchJob) -> EvidenceDraft:
+    ...
 
 """
 TODOs:
@@ -115,7 +125,7 @@ async def request_media_download(channel: Channel, media_id: str) -> MediaDownlo
 
     return await _request_whatsapp_media_download(media_id)
 
-async def route(msg: IncomingMessage, canonical_msg: CanonicalMessage):
+async def route(msg: IncomingMessage, canonical_msg: CanonicalMessage) -> RoutePlan:
     """Route request based on the modalities present within the forwared message."""
 
     # APK

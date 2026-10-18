@@ -10,3 +10,6 @@ wheels/
 .venv
 .env
 graphify-out/
+.ruff_cache/
+.pytest_cache/
+.superpowers/

@@ -1,11 +1,12 @@
-from typing import List
-import unicodedata
-from disarm import Text
+import asyncio
+from uuid import UUID
 
-from redis import asyncio
-from vouch.branches.router import route
-from vouch.decision.models import DecisionRecord
-from vouch.ingestion.models import Event
+from pydantic import BaseModel, ConfigDict, Field
+
+from vouch.ledger.models import EvidenceDraft
+from vouch.router import route
+from vouch.decision import DecisionRecord
+from vouch.ingestion import Event
 from vouch.logger import get_logger
 from vouch.preprocessing.adapter import adapt
 from vouch.preprocessing.preprocess import preprocess
@@ -27,7 +28,7 @@ async def run(event: Event) -> DecisionRecord | None:
     plan = route(msg, canonical_msg)
 
     # parallel fan-out
-    results = await asyncio.gather(
+    results: list[EvidenceDraft] = await asyncio.gather(
         *(execute_branch(job) for job in plan.jobs),
         return_exceptions=True
     )
@@ -36,8 +37,12 @@ async def run(event: Event) -> DecisionRecord | None:
     # fan-in: single ledger writer
     snapshot = ledger.append(investigation_id, drafts)
 
+    skills = get_modality_skills()
+
+    tools = select_required_tools()
+
     # agentic reasoning
-    decision = await investigate(snapshot)
+    decision = await investigate(snapshot, skills, tools)
 
     # persist decision
     update_state(decision)

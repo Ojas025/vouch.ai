@@ -1,11 +1,11 @@
-"""Unit tests for vouch.security.security webhook verification."""
+"""Unit tests for vouch.security webhook verification."""
 
 import hashlib
 import hmac
 
 import pytest
 
-from vouch.security.security import verify_telegram_token, verify_whatsapp_signature
+from vouch.security import verify_telegram_token, verify_whatsapp_signature
 
 SECRET = "app-secret-123"
 BODY = b'{"message_id":"wamid.ABC","text":"hello"}'

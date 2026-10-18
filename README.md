@@ -1,94 +1,169 @@
-# Vouch — Autonomous Threat & Fraud Intelligence Engine
+# Vouch - Autonomous Threat & Fraud Intelligence Engine
 
-> Multi-modal forensic investigation of user-forwarded suspicious messages (WhatsApp, Telegram, REST): evidence-ledger based, auditable, abstains when evidence is insufficient.
+> Multi-modal forensic investigation of user-forwarded suspicious messages (WhatsApp, Telegram, REST). Evidence-ledger based, auditable, and abstains when evidence is insufficient.
 
 [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
 [![Architecture Spec](https://img.shields.io/badge/spec-ARCHITECTURE.md-green.svg)](docs/ARCHITECTURE.md)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
-## 1. Overview
+## Overview
 
-Vouch investigates user-forwarded suspicious messages (WhatsApp, Telegram, REST) as forensic artifacts — message text, URLs, APKs, documents, and images — and produces an evidence-backed, auditable verdict.
+Vouch investigates user-forwarded suspicious messages as forensic artifacts - text, URLs, APKs, documents, images - and produces an evidence-backed, auditable report.
 
-### Features
+The design separates two things that are usually tangled together:
 
-- Unicode-deobfuscated canonicalization (NFKC, zero-width strip, confusable skeleton, script profile)
-- Typed entity extraction (UPI VPA, IFSC, phone, amount, URL, email)
-- Async fan-out modality branches: URL sandbox, APK static analysis, DOC parsing, image OCR/QR
-- TTL-cached fact layer (URLhaus, RDAP, Razorpay IFSC, threat feeds)
-- Immutable, append-only evidence ledger with provenance and trust levels
-- Asymmetric multi-agent investigation over typed claims (planned)
-- Deterministic policy engine producing `DecisionRecord`s with claim-ID grounded responses (planned)
+- A deterministic pipeline that canonicalizes input, extracts typed entities, and appends observations to an append-only ledger.
+- A task-delegated investigation runtime that reasons over that ledger under hard limits, where every conclusion is grounded in a ledger record.
 
----
+Nothing in the runtime can invent evidence. If the limits run out, the scope is uncovered, or the evidence is insufficient, the only permitted answer is `Inconclusive`.
 
-## 2. Architecture Blueprint
+Decision states: `Malicious` | `Suspicious` | `Benign` | `Inconclusive`.
+
+## Architecture
 
 ```mermaid
-flowchart TD
-    A[Raw Forwarded Message] --> B[Intake: api/gateways]
-    B --> C[Worker: queue/handler]
-    C --> D[Preprocessing: preprocessing/]
-    D --> E{TriagePlan / route}
-    E -->|URL| F[URL Branch: Obscura]
-    E -->|APK| G[APK Branch: androguard]
-    E -->|Document| H[Doc Branch: oletools]
-    E -->|Image| I[Image Branch: OCR/QR]
-    F --> J[Gather EvidenceDrafts]
-    G --> J
-    H --> J
-    I --> J
-    J --> K[Fact Services: URLhaus, RDAP, IFSC]
-    K --> L[Evidence Ledger: append-only + snapshot]
-    L --> M[Agents + Policy Engine]
-    M --> N[DecisionRecord]
-    N --> O[Grounded Response]
+flowchart TB
+    IN["Input Artifacts<br/>message · URL · APK · document · image · video"]
+
+    subgraph PRE["Deterministic Pipeline"]
+        direction TB
+        CAN["Canonicalization<br/>NFKC · confusable skeleton · script profile"]
+        ENT["Typed Entity Extraction"]
+        TRI["Triage &amp; Cache Hierarchy<br/>tier gate - decides what reaches the runtime"]
+        MOD["Modality Analysis<br/>artifact-specific extraction"]
+        FS["Fact Service<br/>IFSC · phone · domain · feeds"]
+        TR["Tool Registry<br/>available tools + execution policies"]
+        SK["Modality Skills Repository<br/>interpretation rubrics per modality"]
+    end
+
+    LED[("Append-only Evidence Ledger<br/>observations · results<br/>hypotheses · verification events")]
+
+    subgraph RT["Investigation Runtime - sandboxed · resource-limited"]
+        direction TB
+        JEV["Case Orchestrator<br/>plan · partition · schedule · coverage state"]
+        W["Independent Workers<br/>disjoint evidence · disjoint tools<br/>own the investigation loop"]
+        SYN["Cross-artifact Synthesis"]
+        GT["Deterministic Gate<br/>adds findings · never overturns"]
+        AV["Agent Verifier<br/>support · insufficiency · contradiction"]
+    end
+
+    LIM["Hard Limits<br/>iterations · model calls · tool calls · time · resources"]
+    OUT["Decision & Report<br/>Malicious · Suspicious · Benign · Inconclusive"]
+
+    IN --> CAN --> ENT --> TRI
+    TRI --> MOD
+    MOD --> FS
+    TRI ==>|"gated entry"| JEV
+
+    MOD -.->|"append"| LED
+    FS -.->|"append"| LED
+
+    TR -.->|"capabilities"| W
+    SK -.->|"rubric"| W
+    LIM -.-> JEV
+    LIM -.-> W
+
+    JEV ==>|"task envelope"| W
+    LED -.->|"role-scoped read"| W
+    W ==>|"hypotheses"| LED
+    W ==>|"findings"| SYN
+    W ==>|"findings"| GT
+
+    SYN ==>|"claims"| GT
+    GT ==>|"passes"| AV
+    AV ==>|"verification events"| LED
+    AV ==>|"insufficient: follow-up"| JEV
+    AV ==>|"resolved"| OUT
+    JEV ==> OUT
+
+    classDef gate fill:#2a1a3e,stroke:#7a4a9e
+    class GT gate
 ```
 
-For the exhaustive specification, state transition tables, and fallback matrices, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+For layer responsibilities, ledger record families, task-envelope fields, and the full invariant table, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
----
-
-## 3. Codebase Organization
+## Codebase Organization
 
 ```text
 src/vouch/
-├── api/                # Intake: gateways, routes, middlewares, server
-├── db/                 # SQLAlchemy models (Submission, Investigation, BranchJob), session
-├── ingestion/          # IncomingMessage, Event contracts
-├── queue/              # Redis stream: stream, handler, worker pool
-├── preprocessing/      # Adapters, canonicalization, entity extraction, entities
-├── triage/             # Cache tiers + re-validator (planned)
-├── branches/           # 4A URL · 4B APK · 4C DOC · 4D IMAGE, BranchJob
-├── facts/              # Threat feeds, RDAP, IFSC resolution (planned)
-├── ledger/             # Append-only Evidence, InvestigationSnapshot
-├── agents/             # Adversarial agent teams (planned)
-├── decision/           # Deterministic policy engine, DecisionRecord
-├── response/           # Grounded response templates (planned)
-├── security/           # TrustLevel, Provenance, EntityRef
-└── worker/             # Stream consumer, handler dispatcher
+├── api/             # FastAPI intake: verified webhooks, transactional outbox
+├── db/              # SQLAlchemy async models and session factory
+├── ingestion.py     # Event, IncomingMessage, AttachmentMetadata, Channel
+├── security.py      # TrustLevel, Provenance, EntityRef
+├── preprocessing/   # Canonicalization and typed entity extraction
+├── router.py        # Modality routing and media fetch
+├── stream.py        # Redis Streams service
+├── worker.py        # Stream consumer pool
+├── pipeline.py      # adapt -> preprocess -> route -> fan-out -> decision
+├── ledger/          # Append-only evidence contract
+├── tools/           # Registry, policy, guardrails, rate limiting
+│   └── facts/       # URLhaus, ThreatFox, OpenPhish, RDAP, IFSC, urlscan, VirusTotal
+├── agents/          # Model provider and typed agent contracts
+├── skills/          # Modality skills repository (placeholder)
+├── decision.py      # RiskLevel, Verdict, DecisionRecord
+├── response.py      # Grounded response templates
+├── config.py        # pydantic-settings configuration
+├── logger.py        # Structured JSON logging
+├── telemetry.py     # OpenTelemetry and Pyroscope wiring
+└── utils.py         # Retry and misc helpers
 ```
 
----
-
-## 4. Development Setup
+## Development Setup
 
 ### Prerequisites
-* Python 3.12+
-* [uv](https://github.com/astral-sh/uv) or standard Python `venv`
 
-### Installation
+- Python 3.13
+- [uv](https://github.com/astral-sh/uv)
+
+### Install
+
 ```bash
-git clone https://github.com/ojas/vouch.git
-cd vouch
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+uv sync
 ```
 
-### Running Test Suite
+### Run
+
 ```bash
-pytest tests/ -v
+uv run uvicorn vouch.api.server:app --reload   # API
+uv run python -m vouch.api.outbox              # outbox relay
+uv run python -m vouch.worker                   # stream consumer pool
+uv run alembic upgrade head                    # database migrations
 ```
+
+### Tests
+
+```bash
+uv run pytest tests/ -q
+```
+
+### Environment
+
+Create a `.env` file with the variables your deployment needs. Key variables:
+
+| Variable | Purpose |
+|---|---|
+| `POSTGRES_URL` | Database connection |
+| `REDIS_URL` | Event stream connection |
+| `WHATSAPP_SECRET` | Webhook signature verification |
+| `TELEGRAM_WEBHOOK_SECRET` | Telegram secret-token verification |
+| `WHATSAPP_ACCESS_TOKEN` | Outbound replies |
+| `ABUSE_CH_AUTH_KEY` | URLhaus and ThreatFox feeds (optional) |
+| `VIRUSTOTAL_API_KEY` | VirusTotal lookups (optional) |
+| `URLSCAN_API_KEY` | urlscan lookups (optional) |
+| `FACT_PROFILE` | `core` (default) or `extended` |
+
+### Local stack
+
+```bash
+docker compose -f docker/docker-compose.yml up -d
+docker compose -f docker/docker-compose.yml -f docker/compose.dev.yml up -d  # hot reload
+```
+
+| Service | URL |
+|---|---|
+| API | http://127.0.0.1:8000 |
+| Grafana | http://127.0.0.1:3000 |
+| Prometheus | http://127.0.0.1:9090 |
+| Tempo | http://127.0.0.1:3200 |
+| Pyroscope | http://127.0.0.1:4040 |

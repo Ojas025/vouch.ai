@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from vouch.ingestion.models import (
+from vouch.ingestion import (
     AttachmentMetadata,
     Channel,
     Event,
