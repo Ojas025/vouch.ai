@@ -30,6 +30,7 @@ class ThreatFoxArgs(BaseModel):
 
 @tool
 async def lookup_threatfox(args: ThreatFoxArgs) -> list[SourceFact]:
+    """abuse.ch ThreatFox IOC lookup for a file hash or host."""
     now = datetime.now(timezone.utc)
     try:
         resp = await call(

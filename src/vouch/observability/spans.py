@@ -41,6 +41,11 @@ ATTR_ERROR_CATEGORY = "vouch.error.category"
 ATTR_REASON_CODE = "vouch.reason_code"
 ATTR_MODALITY = "vouch.modality"
 ATTR_ATTEMPT_SOURCE = "vouch.fact.source"
+ATTR_FACT_SOURCE_COUNT = "vouch.fact.source_count"
+ATTR_FACT_ERROR_COUNT = "vouch.fact.error_count"
+ATTR_INVESTIGATION_ID = "vouch.investigation.id"
+ATTR_JOB_ID = "vouch.job.id"
+ATTR_JOB_IDEMPOTENCY_KEY = "vouch.job.idempotency_key"
 ATTR_OUTCOME = "vouch.outcome"
 
 #: Mirrors of the OTel GenAI conventions, for the LLM span. See module note.
@@ -56,12 +61,22 @@ def get_tracer() -> trace.Tracer:
 
 
 @contextmanager
-def span(name: str, attributes: dict[str, Any] | None = None) -> Iterator[trace.Span]:
+def span(
+    name: str,
+    attributes: dict[str, Any] | None = None,
+    context: Any = None,
+) -> Iterator[trace.Span]:
     """Start a span as the current one.
+
+    ``context`` adopts a remote parent, which is how a worker continues the
+    request's trace instead of starting an unrelated one. Left as ``None`` the
+    span parents to whatever is current, or starts a root span.
 
     Never swallows exceptions, and never records one itself: the OTel context
     manager already calls ``record_exception`` and sets ERROR status on exit.
     Adding a manual record here would double every exception in the span.
     """
-    with get_tracer().start_as_current_span(name, attributes=attributes or {}) as active:
+    with get_tracer().start_as_current_span(
+        name, attributes=attributes or {}, context=context
+    ) as active:
         yield active

@@ -48,6 +48,7 @@ async def _refresh_openphish() -> None:
 
 @tool
 async def lookup_openphish(args: OpenPhishArgs) -> list[SourceFact]:
+    """OpenPhish feed membership lookup for a host."""
     await _refresh_openphish()
     if args.url not in _openphish_feed:
         return []

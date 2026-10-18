@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 import vouch.db.models  # noqa: F401  — import registers tables on Base.metadata
 from vouch.db.base import Base
-from vouch.stream import EventStream
+from vouch.queue.stream import EventStream
 
 POSTGRES_HOST = os.environ.get("VOUCH_TEST_PG_HOST", "127.0.0.1")
 POSTGRES_PORT = int(os.environ.get("VOUCH_TEST_PG_PORT", "5432"))

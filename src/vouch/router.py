@@ -10,6 +10,8 @@ from vouch.config import settings
 from vouch.ingestion import AttachmentMetadata, Channel, IncomingMessage, MediaDownloadMetadata
 from vouch.ledger.models import EvidenceDraft
 from vouch.logger import get_logger
+from vouch.observability.context import bind_correlation
+from vouch.observability.spans import ATTR_MODALITY, SPAN_INVESTIGATION_FANOUT, span
 from vouch.preprocessing.models import CanonicalMessage, Modality
 from vouch.utils import delete_from_path, retry
 
@@ -192,14 +194,41 @@ async def route(msg: IncomingMessage, canonical_msg: CanonicalMessage) -> RouteP
             investigation_id = "inv_" + f"{msg.channel}:{msg.submission_id}"
             job_id = "job_" + str(uuid.uuid4())
 
-            if media.kind == Modality.APK and media.file_path is not None:
-                await analyze_apk(BranchJob(
-                    investigation_id=investigation_id,
-                    job_id=job_id,
-                    modality=Modality.APK,
-                    artifact=media,
-                    attempt_no=1
-                ))
+            # The span is not a try/except of its own: the one at the end of
+            # this function already terminates and reports the same exception.
+            with span(SPAN_INVESTIGATION_FANOUT, {
+                "vouch.job.id": job_id,
+                ATTR_MODALITY: media.kind.value,
+                "vouch.investigation.id": investigation_id,
+            }):
+                with bind_correlation(investigation_id=investigation_id, job_id=job_id):
+                    logger.info(
+                        "branch dispatched",
+                        extra={
+                            "event": "branch.dispatched",
+                            "component": "router",
+                            "modality": media.kind.value,
+                        },
+                    )
+
+                    if media.kind == Modality.APK and media.file_path is not None:
+                        await analyze_apk(BranchJob(
+                            investigation_id=investigation_id,
+                            job_id=job_id,
+                            modality=Modality.APK,
+                            artifact=media,
+                            attempt_no=1
+                        ))
+
+                    logger.info(
+                        "branch completed",
+                        extra={
+                            "event": "branch.completed",
+                            "component": "router",
+                            "modality": media.kind.value,
+                            "outcome": "ok",
+                        },
+                    )
 
     except Exception as e:
         logger.error(

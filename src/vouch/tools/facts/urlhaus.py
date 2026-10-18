@@ -23,6 +23,7 @@ class UrlhausArgs(BaseModel):
 
 @tool
 async def lookup_urlhaus(args: UrlhausArgs) -> list[SourceFact]:
+    """URLhaus abuse.ch host lookup: malware distribution hosting."""
     now = datetime.now(timezone.utc)
     host = host_of(args.url)
     try:

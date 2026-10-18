@@ -51,6 +51,7 @@ def _rdap_dt(raw: str) -> datetime | None:
 
 @tool
 async def lookup_rdap(args: RdapArgs) -> list[SourceFact]:
+    """RDAP registration lookup: registrar, creation and expiry dates."""
     now = datetime.now(timezone.utc)
     domain = host_of(args.url)
     if not domain:

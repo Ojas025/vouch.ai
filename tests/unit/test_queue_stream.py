@@ -1,4 +1,4 @@
-"""Unit tests for vouch.stream.EventStream.
+"""Unit tests for vouch.queue.stream.EventStream.
 
 The Redis client is an AsyncMock, so no socket is opened and no server is
 required. Assertions cover the exact command arguments issued to Redis, which
@@ -13,7 +13,7 @@ from redis import ResponseError
 from redis.exceptions import ConnectionError as RedisConnectionError
 
 from vouch.ingestion import Event
-from vouch.stream import EventStream
+from vouch.queue.stream import EventStream
 
 
 @pytest.fixture

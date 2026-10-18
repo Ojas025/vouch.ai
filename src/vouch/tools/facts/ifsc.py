@@ -26,6 +26,7 @@ class IFSCArgs(BaseModel):
 
 @tool
 async def lookup_ifsc(args: IFSCArgs) -> list[SourceFact]:
+    """IFSC code lookup against Razorpay: validates an Indian bank branch code."""
     now = datetime.now(timezone.utc)
     code = args.code.upper()
 

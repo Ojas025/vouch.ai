@@ -9,7 +9,10 @@ from sqlalchemy import select
 from vouch.db.models import OutboxEvent
 from vouch.db.session import SessionLocal
 from vouch.ingestion import Event
-from vouch.stream import EventStream
+from vouch.logger import configure_logging, get_logger
+from vouch.queue.stream import EventStream
+
+logger = get_logger(__name__)
 
 
 async def publish_outbox(session, stream: EventStream):
@@ -27,16 +30,35 @@ async def publish_outbox(session, stream: EventStream):
     for row in events:
         # ORM rows are not JSON serializable: the broker contract is the typed
         # Event (channel, idempotency_key, payload).
-        await stream.produce(
-            Event(
-                channel=row.channel,
-                idempotency_key=row.idempotency_key,
-                payload=row.payload,
-            )
+        event = Event(
+            channel=row.channel,
+            idempotency_key=row.idempotency_key,
+            payload=row.payload,
         )
+
+        # The originating request's context, captured when the row was written.
+        # Passing the relay's own context here would trace the relay instead.
+        # Legacy rows carry none, and are published exactly as before.
+        carrier = getattr(row, "trace_context", None)
+        if isinstance(carrier, dict) and carrier:
+            await stream.produce(event, trace_context=carrier)
+        else:
+            await stream.produce(event)
 
         row.status = "published"
         row.published_at = datetime.now(timezone.utc)
+
+        logger.info(
+            "outbox event published",
+            extra={
+                "event": "outbox.published",
+                "component": "api.outbox",
+                "job_id": str(row.id),
+                "idempotency_key": row.idempotency_key,
+                "channel": row.channel,
+                "outcome": "ok",
+            },
+        )
 
     await session.commit()
 
@@ -53,6 +75,7 @@ EVENTS_STREAM = "events:stream"
 
 async def main() -> None:
     """Entrypoint for the relay process that drains the outbox."""
+    configure_logging()
     stream = EventStream(
         redis_url=os.environ["REDIS_URL"],
         stream_name=EVENTS_STREAM,

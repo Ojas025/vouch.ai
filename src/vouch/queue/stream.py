@@ -3,12 +3,23 @@ Reusable Redis Stream service with connection pooling
 """
 
 from typing import Any
+from dataclasses import fields, is_dataclass
 import json
 
 from redis import ResponseError
 from redis.asyncio import Redis, ConnectionPool
 
-from src.vouch.schema import Event
+from vouch.ingestion import Event
+from vouch.observability.propagation import inject_trace_context
+
+
+def _jsonable(payload: Any) -> Any:
+    """Shallow dataclass->dict conversion. Shallow on purpose: asdict deep-copies
+    every leaf, and payload holds the raw provider webhook body."""
+    if is_dataclass(payload) and not isinstance(payload, type):
+        return {f.name: getattr(payload, f.name) for f in fields(payload)}
+    return payload
+
 
 class EventStream:
     def __init__(self, redis_url: str, stream_name: str):
@@ -17,11 +28,20 @@ class EventStream:
         self.pool = ConnectionPool.from_url(url=redis_url, max_connections=20, decode_responses=True)
         self.client = Redis(connection_pool=self.pool)
 
-    async def produce(self, payload: Event) -> bytes | str:
-        """Producer method: appends a task to the event stream."""
+    async def produce(self, payload: Event, trace_context: dict | None = None) -> bytes | str:
+        """Producer method: appends a task to the event stream.
+
+        ``trace_context`` is the W3C carrier of the request that originated the
+        event. It rides inside the ``data`` body rather than as a second Redis
+        field, so the message contract is unchanged; when it is None the body is
+        byte-identical to what this produced before.
+        """
+        body = _jsonable(payload)
+        if trace_context:
+            body = inject_trace_context(dict(body), trace_context)
         return await self.client.xadd(
                 self.stream_name,
-                {"data": json.dumps(payload)},
+                {"data": json.dumps(body)},
                 maxlen=100_000,
                 approximate=True
         )

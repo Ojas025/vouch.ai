@@ -78,7 +78,7 @@ class TestPublishOutboxRelaySeam:
         OutboxEvent row, so the row -> json.dumps contract is actually
         exercised rather than absorbed by MagicMock(spec=OutboxEvent).
         """
-        from vouch.stream import EventStream
+        from vouch.queue.stream import EventStream
 
         row = OutboxEvent(idempotency_key="telegram:1", payload={"text": "hi"})
         result = MagicMock()

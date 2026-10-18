@@ -11,8 +11,10 @@ import uuid
 from vouch.db.models import OutboxEvent, Submission
 from vouch.db.session import SessionLocal
 from vouch.logger import configure_logging, get_logger, shutdown_logging
+from vouch.observability.context import bind_correlation
+from vouch.observability.propagation import capture_trace_context
 from vouch.security import verify_telegram_token, verify_whatsapp_signature
-from vouch.stream import EventStream
+from vouch.queue.stream import EventStream
 
 load_dotenv()
 
@@ -50,12 +52,28 @@ async def create_entry(session, key: str, payload: dict[str, Any], payload_diges
 
     event = OutboxEvent(
         idempotency_key=key,
-        payload=payload
+        payload=payload,
+        trace_context=capture_trace_context() or None,
     )
 
     await session.add(event)
 
     await session.commit()
+
+    # Only identifiers and a size. The payload is the provider's raw message and
+    # the digest is a stable fingerprint of it, so neither is logged.
+    logger.info(
+        "submission persisted",
+        extra={
+            "event": "submission.persisted",
+            "component": "api.server",
+            "job_id": str(event.id),
+            "idempotency_key": key,
+            "submission_id": str(submission.id),
+            "payload_bytes": len(str(payload)),
+            "outcome": "ok",
+        },
+    )
 
     return event.id
 

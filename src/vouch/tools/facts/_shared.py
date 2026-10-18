@@ -17,8 +17,19 @@ import httpx
 from pydantic import BaseModel, Field
 
 from vouch.config import settings
+from vouch.logger import get_logger
+from vouch.observability.spans import (
+    ATTR_ATTEMPT_SOURCE,
+    ATTR_DURATION_MS,
+    ATTR_FACT_ERROR_COUNT,
+    ATTR_FACT_SOURCE_COUNT,
+    SPAN_FACT_LOOKUP,
+    span,
+)
 from vouch.preprocessing.models import EntityType
 from vouch.security import EntityRef
+
+logger = get_logger(__name__)
 
 
 # --- Models ---
@@ -232,6 +243,19 @@ async def call(name: str, method: str, url: str, **kw) -> httpx.Response:
             )
 
         if attempt < MAX_ATTEMPTS - 1:
+            # The upstream name only. `url` embeds the indicator being looked
+            # up, which came out of a user's forwarded message.
+            logger.warning(
+                "fact source retrying",
+                extra={
+                    "event": "fact.retry",
+                    "component": "tools.facts",
+                    "source": name,
+                    "attempt": attempt + 1,
+                    "max_attempts": MAX_ATTEMPTS,
+                    "error_category": type(last_exc).__name__,
+                },
+            )
             await asyncio.sleep(uniform(0, min(MAX_DELAY, BASE_DELAY * 2 ** attempt)))
 
     raise last_exc  # type: ignore[misc]
@@ -281,7 +305,12 @@ async def lookup(
     registry: dict | None = None,
 ) -> FactServiceResult:
     """Fan out across every source registered for this entity type, in parallel, merge the
-    results, and cache them."""
+    results, and cache them.
+
+    One summary record per lookup rather than one per source: every source has
+    its own `except` that already turns a failure into an empty result, so
+    logging per source would report the same exception from four layers.
+    """
     sources = (registry if registry is not None else REGISTRY).get(entity.type, [])
     query = FactQuery(entity=entity, investigation_id=investigation_id)
     t0 = time.monotonic()
@@ -303,33 +332,56 @@ async def lookup(
             duration_ms=(time.monotonic() - t0) * 1000,
         )
 
-    results = await asyncio.gather(
-        *(_guard(src, entity) for src in sources), return_exceptions=True
-    )
+    with span(SPAN_FACT_LOOKUP, {ATTR_ATTEMPT_SOURCE: entity.type.value}) as lookup_span:
+        results = await asyncio.gather(
+            *(_guard(src, entity) for src in sources), return_exceptions=True
+        )
 
-    facts: list[SourceFact] = []
-    errors: list[str] = []
-    for src, res in zip(sources, results):
-        if isinstance(res, BaseException):
-            # CancelledError is a BaseException that _guard doesn't catch; it must
-            # not abort the batch.
-            errors.append(f"{src.__name__}: {res}")
-            continue
-        src_facts, err = res
-        facts.extend(src_facts)
-        if err:
-            errors.append(f"{src.__name__}: {err}")
+        facts: list[SourceFact] = []
+        errors: list[str] = []
+        for src, res in zip(sources, results):
+            if isinstance(res, BaseException):
+                # CancelledError is a BaseException that _guard doesn't catch; it must
+                # not abort the batch.
+                errors.append(f"{src.__name__}: {res}")
+                continue
+            src_facts, err = res
+            facts.extend(src_facts)
+            if err:
+                errors.append(f"{src.__name__}: {err}")
 
-    if facts:
-        # Single write, TTL bounded by the shortest-lived fact.
-        await set_facts(redis, entity, facts, merged_ttl(facts))
+        if facts:
+            # Single write, TTL bounded by the shortest-lived fact.
+            await set_facts(redis, entity, facts, merged_ttl(facts))
+
+        duration_ms = (time.monotonic() - t0) * 1000
+        status = FactLookupStatus.HIT if facts else FactLookupStatus.MISS
+
+        # `errors` holds str(exc) from httpx, which embeds the queried URL, so
+        # only the count is recorded.
+        logger.info(
+            "fact lookup completed",
+            extra={
+                "event": "fact.lookup",
+                "component": "tools.facts",
+                "status": status.value,
+                "source_count": len(sources),
+                "error_count": len(errors),
+                "fact_count": len(facts),
+                "duration_ms": duration_ms,
+                "outcome": "partial" if errors and facts else ("failure" if errors else "ok"),
+            },
+        )
+        lookup_span.set_attribute(ATTR_FACT_SOURCE_COUNT, len(sources))
+        lookup_span.set_attribute(ATTR_FACT_ERROR_COUNT, len(errors))
+        lookup_span.set_attribute(ATTR_DURATION_MS, duration_ms)
 
     return FactServiceResult(
         query=query,
-        status=FactLookupStatus.HIT if facts else FactLookupStatus.MISS,
+        status=status,
         facts=facts,
         errors=errors,
-        duration_ms=(time.monotonic() - t0) * 1000,
+        duration_ms=duration_ms,
     )
 
 

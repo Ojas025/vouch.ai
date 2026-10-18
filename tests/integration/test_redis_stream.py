@@ -1,4 +1,4 @@
-"""Integration tests: vouch.stream.EventStream against a real Redis Stream.
+"""Integration tests: vouch.queue.stream.EventStream against a real Redis Stream.
 
 Stream semantics that only a real broker shows: the id format XADD returns, a
 consumer group reading "new" entries only, XACK returning the number of entries
