@@ -1,0 +1,2 @@
+{"schema_version": 1, "timestamp": "2026-10-18T17:14:37.771984Z", "level": "INFO", "logger": "vouch.audit", "module": "rev_test", "lineno": 13, "message": "audit-info-after-removal", "event": "tool_call.requested"}
+{"schema_version": 1, "timestamp": "2026-10-18T17:14:37.772175Z", "level": "WARNING", "logger": "vouch.audit", "module": "rev_test", "lineno": 14, "message": "audit-warning-after-removal", "event": "tool_call.failed"}

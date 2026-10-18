@@ -61,6 +61,10 @@ BULK_KEY_FRAGMENTS = frozenset(
 
 _CONTROL_CHARS = frozenset(chr(c) for c in range(32)) | {"\x7f"}
 
+#: str.translate table built once. A per-character generator was measurably
+#: the most expensive thing in the logging path; translate does it in C.
+_TRANSLATION_TABLE = {ord(c): " " for c in _CONTROL_CHARS}
+
 
 def is_sensitive_key(key: str) -> bool:
     """True when a field name suggests credentials or raw content."""
@@ -80,7 +84,7 @@ def scrub_text(value: str) -> str:
     Newline removal is what stops a value from injecting a fake log line;
     ``json.dumps`` would escape it but the console handler would not.
     """
-    cleaned = "".join(" " if ch in _CONTROL_CHARS else ch for ch in value)
+    cleaned = value.translate(_TRANSLATION_TABLE)
     if len(cleaned) > MAX_STRING_LEN:
         return cleaned[:MAX_STRING_LEN] + TRUNCATION_MARKER
     return cleaned
