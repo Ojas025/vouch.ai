@@ -20,7 +20,15 @@ class BranchJob(BaseModel):
     artifact: AttachmentMetadata | None = None
     attempt_no: int = 1
 
+class RoutePlan(BaseModel):
+    """What route() hands to the fan-out stage: one BranchJob per artifact."""
+    jobs: list[BranchJob] = []
+
 async def analyze_apk(job: BranchJob) -> EvidenceDraft:
+    return await _analyze_apk(job)
+
+
+async def _analyze_apk(job: BranchJob) -> EvidenceDraft:
     ...
 
 """
@@ -58,14 +66,20 @@ async def fetch_media(metadata: MediaDownloadMetadata, file_path: Path) -> bool:
                 actual = hasher.hexdigest()
 
                 if actual != metadata.sha256:
-                    logger.exception(f"Failed integrity verification for downloaded artifact: {metadata}")
+                    logger.error(
+                        "artifact integrity verification failed",
+                        extra={"event": "media.integrity_failed", "component": "router", "reason_code": "integrity_mismatch"},
+                    )
                     delete_from_path(file_path)
                     return False
 
                 return True
 
     except HTTPException as e:
-        logger.exception(f"Failed to download media artifacts: {metadata}\nError: {e}")
+        logger.error(
+            "failed to download media artifact",
+            extra={"event": "media.download_failed", "component": "router", "error_category": type(e).__name__},
+        )
 
 def get_media_kind(media: AttachmentMetadata) -> Modality:
     is_apk = (
@@ -90,12 +104,18 @@ async def _request_telegram_media_download(media_id: str) -> MediaDownloadMetada
         data = response.json()
 
         if response.status_code == 200:
-            logger.info(f"Media download metadata received for: {media_id}")
+            logger.info(
+                "media download metadata received",
+                extra={"event": "media.metadata_received", "component": "router", "media_id": media_id},
+            )
 
         return MediaDownloadMetadata.model_validate(data)
 
     except requests.HTTPError as e:
-        logger.error(f"Failed to fetch media download metadata: {e}")
+        logger.error(
+            "failed to fetch media download metadata",
+            extra={"event": "media.metadata_failed", "component": "router", "error_category": type(e).__name__},
+        )
 
 @retry(max_attempts=3)
 async def _request_whatsapp_media_download(media_id: str) -> MediaDownloadMetadata | None:
@@ -112,12 +132,18 @@ async def _request_whatsapp_media_download(media_id: str) -> MediaDownloadMetada
         data = response.json()
 
         if response.status_code == 200:
-            logger.info(f"Media download metadata received for: {media_id}")
+            logger.info(
+                "media download metadata received",
+                extra={"event": "media.metadata_received", "component": "router", "media_id": media_id},
+            )
 
         return MediaDownloadMetadata.model_validate(data)
 
     except requests.HTTPError as e:
-        logger.error(f"Failed to fetch media download metadata: {e}")
+        logger.error(
+            "failed to fetch media download metadata",
+            extra={"event": "media.metadata_failed", "component": "router", "error_category": type(e).__name__},
+        )
 
 async def request_media_download(channel: Channel, media_id: str) -> MediaDownloadMetadata | None:
     if channel == Channel.TELEGRAM:
@@ -137,7 +163,10 @@ async def route(msg: IncomingMessage, canonical_msg: CanonicalMessage) -> RouteP
         for media in msg.media:
             metadata = await request_media_download(msg.channel, media.file_id)
             if metadata is None:
-                logger.info(f"Media metadata not found: {media.file_id}")
+                logger.info(
+                    "media metadata not found",
+                    extra={"event": "media.metadata_not_found", "component": "router"},
+                )
                 continue
 
             media.download_metadata = metadata
@@ -146,7 +175,10 @@ async def route(msg: IncomingMessage, canonical_msg: CanonicalMessage) -> RouteP
             file_downloaded = await fetch_media(metadata, MEDIA_SAVE_DIR / media.file_name)
 
             if not file_downloaded:
-                logger.debug(f"Failed to download file: {media.file_id}")
+                logger.debug(
+                    "failed to download file",
+                    extra={"event": "media.download_failed", "component": "router", "reason_code": "integrity_or_network"},
+                )
                 continue
 
             media.file_path = MEDIA_SAVE_DIR / media.file_name
@@ -170,4 +202,8 @@ async def route(msg: IncomingMessage, canonical_msg: CanonicalMessage) -> RouteP
                 ))
 
     except Exception as e:
-        logger.error(e)
+        logger.error(
+            "routing failed",
+            extra={"event": "routing.failed", "component": "router", "error_category": type(e).__name__},
+            exc_info=True,
+        )

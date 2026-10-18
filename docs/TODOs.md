@@ -2,7 +2,31 @@
 - [x] Write POST endpoints for whatsapp, telegram
 - [x] Setup centralized logging
 - [x] Write payload verification for both channels
-- [ ] Delegate persistence, orchestration away from http endpoint for faster ack
-- [ ] setup redis
-- [ ] setup postgresql
-- [ ] write preprocessing.py
+- [x] Delegate persistence, orchestration away from http endpoint for faster ack
+- [x] setup redis
+- [x] setup postgresql
+- [x] write preprocessing.py
+
+## OBSERVATION
+
+- [ ] Add `WHATSAPP_SECRET` to `.env` (api aborts at import without it).
+- [ ] Add `TELEGRAM_WEBHOOK_SECRET` to `.env` (api aborts at import without it).
+- [ ] Change `.env` `OTEL_EXPORTER_OTLP_PROTOCOL` from `grpc` to `http/protobuf` so non-Docker runs start.
+- [ ] Point `.env` `OTEL_EXPORTER_OTLP_ENDPOINT` at `:4318` to match `http/protobuf`.
+- [ ] Replace the ignored `OTEL_SERVICE_NAMESPACE` with `OTEL_RESOURCE_ATTRIBUTES=service.namespace=...`.
+- [ ] Replace the ignored `OTEL_INSTRUMENTATION_HTTP_EXCLUDED_URLS` with `OTEL_PYTHON_EXCLUDED_URLS`.
+- [ ] Inject a real pipeline handler into `WorkerPool` in `src/vouch/worker.py` (currently `handler=None` with a TODO).
+- [ ] Add the missing Alembic migration for the `outbox_events` table (relay crash-loops without it).
+- [ ] Fix the `submissions.id` drift: migration creates `Integer`, the model declares `UUID`.
+- [ ] Investigate why Pyroscope `/ready` returns 503 while ingestion and Grafana queries work.
+- [ ] Remove the no-op `[uv.tools] package = false` block from `pyproject.toml`.
+- [ ] Remove the local `.venv` from any build context concerns if a second `Dockerfile` is ever added (`.dockerignore` covers it).
+- [ ] Re-up the stack from `.env` rather than `/tmp/opencode/dev-secrets.override.yml` once the two secrets exist.
+- [ ] Watch for the uv `logging-0.4.9.6` sdist regression fix, then un-pin the builder from `uv:0.12.5-python3.13-trixie-slim`.
+- [ ] Add Loki to `docker/compose.dev.yml` and swap the collector's `debug` logs exporter for `otlphttp/loki`.
+- [ ] Add Tempo's `metrics_generator` and the Prometheus remote-write receiver to restore the trace-to-metrics derived fields.
+- [ ] Decide whether Prometheus 3's native OTLP receiver should replace the collector's `prometheus` scrape exporter.
+- [ ] Add a `pyroscope` healthcheck only after `/ready` behaves, otherwise leave it without one.
+- [ ] Add `/app/src/vouch/downloads` and `/app/logs` to `.gitignore` for non-Docker runs.
+- [ ] Consider `HEALTHCHECK` verification on real Docker, since podman ignores it in OCI image format.
+- [ ] Revisit `restart: unless-stopped` on the `relay` once `outbox_events` exists, to drop the brief crash-loop on first boot.
