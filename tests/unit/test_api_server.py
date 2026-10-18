@@ -210,6 +210,7 @@ class TestWhatsappWebhook:
                 )
 
         assert response.status_code == 400
+        session.add.assert_not_called()
         session.commit.assert_not_awaited()
 
     def test_malformed_json_is_rejected_as_bad_request(self, session):
@@ -226,6 +227,21 @@ class TestWhatsappWebhook:
 
         assert response.status_code == 400
         session.commit.assert_not_awaited()
+
+    def test_non_object_json_is_rejected_as_bad_request(self, session):
+        # Valid JSON that is not an object has no message_id to key on.
+        body = json.dumps(["not", "an", "object"]).encode()
+        with patch.object(server_module, "SessionLocal", return_value=session):
+            with TestClient(
+                server_module.app, raise_server_exceptions=False
+            ) as raw:
+                response = raw.post(
+                    "/v1/webhook/whatsapp", content=body,
+                    headers={"X-Hub-Signature-256": whatsapp_signature(body)},
+                )
+
+        assert response.status_code == 400
+        session.add.assert_not_called()
 
 
 # --------------------------------------------------------------------------
@@ -286,6 +302,7 @@ class TestTelegramWebhook:
                 )
 
         assert response.status_code == 400
+        session.add.assert_not_called()
         session.commit.assert_not_awaited()
 
     def test_digest_is_hex_string(self, client, session):
@@ -313,7 +330,7 @@ class TestTelegramWebhook:
 class TestCreateEntry:
     @pytest.mark.asyncio
     async def test_adds_submission_then_outbox_event(self, session):
-        await create_entry(session, "k", {"a": 1}, b"digest")
+        await create_entry(session, "whatsapp", "k", {"a": 1}, hashlib.sha256(b"digest").hexdigest())
 
         first, second = (c.args[0] for c in session.add.await_args_list)
         assert first.idempotency_key == "k"
@@ -321,8 +338,30 @@ class TestCreateEntry:
         assert second.payload == {"a": 1}
 
     @pytest.mark.asyncio
+    async def test_stores_digest_as_hex_text(self, session):
+        # sha256_digest is a String column: the hex form, not raw bytes.
+        digest = hashlib.sha256(b"digest").hexdigest()
+        await create_entry(session, "whatsapp", "k", {}, digest)
+
+        submission = session.add.await_args_list[0].args[0]
+        assert submission.sha256_digest == digest
+        assert isinstance(submission.sha256_digest, str)
+
+    @pytest.mark.asyncio
+    async def test_stores_payload_as_json_text(self, session):
+        # Submission.payload is a TEXT column, so the dict must be serialised;
+        # the OutboxEvent payload stays a dict for the JSONB column.
+        await create_entry(session, "whatsapp", "k", {"a": 1}, "d" * 64)
+
+        submission = session.add.await_args_list[0].args[0]
+        outbox = session.add.await_args_list[1].args[0]
+        assert isinstance(submission.payload, str)
+        assert json.loads(submission.payload) == {"a": 1}
+        assert outbox.payload == {"a": 1}
+
+    @pytest.mark.asyncio
     async def test_commits_once(self, session):
-        await create_entry(session, "k", {}, b"d")
+        await create_entry(session, "whatsapp", "k", {}, "d" * 64)
         session.commit.assert_awaited_once()
 
 
@@ -331,7 +370,7 @@ class TestCreateEntry:
     async def test_propagates_commit_failure(self, session):
         session.commit.side_effect = RuntimeError("db down")
         with pytest.raises(RuntimeError, match="db down"):
-            await create_entry(session, "k", {}, b"d")
+            await create_entry(session, "whatsapp", "k", {}, "d" * 64)
 
 
 # --------------------------------------------------------------------------

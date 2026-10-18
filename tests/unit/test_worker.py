@@ -15,6 +15,17 @@ import vouch.worker as worker_module
 from vouch.worker import GROUP, Worker, WorkerPool
 
 
+class TestModuleImports:
+    def test_worker_and_pipeline_import_chain_is_clean(self):
+        # The collection of this file once died on the worker -> pipeline ->
+        # router chain (NameError: RoutePlan). Importing both here is the
+        # regression guard for that chain.
+        import vouch.pipeline
+
+        assert vouch.worker.Worker is Worker
+        assert callable(vouch.pipeline.run)
+
+
 @pytest.fixture
 def stream():
     s = AsyncMock()

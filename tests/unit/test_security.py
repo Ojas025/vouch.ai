@@ -57,6 +57,20 @@ class TestVerifyWhatsappSignature:
         sig = "sha256=" + hmac.new(b"", BODY, hashlib.sha256).hexdigest()
         assert verify_whatsapp_signature(BODY, sig, "") is False
 
+    def test_comparison_is_constant_time(self, monkeypatch):
+        # The signature check must go through hmac.compare_digest so that
+        # comparison time leaks nothing about the expected signature.
+        calls = []
+        real = hmac.compare_digest
+
+        def spy(a, b):
+            calls.append((a, b))
+            return real(a, b)
+
+        monkeypatch.setattr(hmac, "compare_digest", spy)
+        assert verify_whatsapp_signature(BODY, VALID_SIG, SECRET) is True
+        assert len(calls) == 1
+
 
 class TestVerifyTelegramToken:
     def test_accepts_matching_token(self):
@@ -75,6 +89,20 @@ class TestVerifyTelegramToken:
         # The empty-token guard fires before comparison, so an unconfigured
         # secret does not accidentally authorise an empty token.
         assert verify_telegram_token(BODY, "", "") is False
+
+    def test_comparison_is_constant_time(self, monkeypatch):
+        # Same as WhatsApp: the shared-secret comparison must not short-circuit
+        # byte by byte, or header timing reveals the token prefix.
+        calls = []
+        real = hmac.compare_digest
+
+        def spy(a, b):
+            calls.append((a, b))
+            return real(a, b)
+
+        monkeypatch.setattr(hmac, "compare_digest", spy)
+        assert verify_telegram_token(BODY, "tok-abc", "tok-abc") is True
+        assert len(calls) == 1
 
     def test_body_argument_is_ignored(self):
         # Telegram's scheme is a shared secret sent in a header and compared for

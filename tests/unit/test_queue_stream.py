@@ -1,4 +1,4 @@
-"""Unit tests for vouch.queue.stream.EventStream.
+"""Unit tests for vouch.stream.EventStream.
 
 The Redis client is an AsyncMock, so no socket is opened and no server is
 required. Assertions cover the exact command arguments issued to Redis, which
@@ -12,8 +12,8 @@ import pytest
 from redis import ResponseError
 from redis.exceptions import ConnectionError as RedisConnectionError
 
-from vouch.ingestion.models import Event
-from vouch.queue.stream import EventStream
+from vouch.ingestion import Event
+from vouch.stream import EventStream
 
 
 @pytest.fixture
@@ -79,11 +79,14 @@ class TestProduce:
     async def test_accepts_the_declared_event_type(self, stream):
         # Event is the declared parameter type of produce(), so it must be
         # serialisable and appended like any other payload.
-        await stream.produce(Event(idempotency_key="telegram:1", payload={"a": 1}))
+        await stream.produce(
+            Event(channel="telegram", idempotency_key="telegram:1", payload={"a": 1})
+        )
 
         fields = stream.client.xadd.call_args.args[1]
         assert set(fields) == {"data"}
         assert json.loads(fields["data"]) == {
+            "channel": "telegram",
             "idempotency_key": "telegram:1",
             "payload": {"a": 1},
         }

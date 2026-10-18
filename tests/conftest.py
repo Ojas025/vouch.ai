@@ -52,6 +52,16 @@ for _key, _value in REQUIRED_ENV.items():
     os.environ.setdefault(_key, _value)
 
 
+def pytest_configure(config):
+    """Register markers here rather than in pyproject so the test suite is
+    self-contained: `pytest -m integration` and `-m "not integration"` select
+    the live-service tree without any configuration outside ``tests/``."""
+    config.addinivalue_line(
+        "markers",
+        "integration: requires live PostgreSQL and Redis (tests/integration/)",
+    )
+
+
 @pytest.fixture(autouse=True)
 def isolate_log_dir(tmp_path, monkeypatch):
     """Point every test's logging at a temporary directory.

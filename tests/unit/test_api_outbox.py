@@ -26,6 +26,7 @@ def _compile(stmt):
 def make_event(idempotency_key="whatsapp:wamid.1", status=None, created_at=None):
     event = MagicMock(spec=OutboxEvent)
     event.id = f"id-{idempotency_key}"
+    event.channel = "whatsapp"
     event.idempotency_key = idempotency_key
     event.payload = {"text": "hi"}
     event.status = status
@@ -77,7 +78,7 @@ class TestPublishOutboxRelaySeam:
         OutboxEvent row, so the row -> json.dumps contract is actually
         exercised rather than absorbed by MagicMock(spec=OutboxEvent).
         """
-        from vouch.queue.stream import EventStream
+        from vouch.stream import EventStream
 
         row = OutboxEvent(idempotency_key="telegram:1", payload={"text": "hi"})
         result = MagicMock()
@@ -165,8 +166,12 @@ class TestPublishOutboxTransitions:
 
         await publish_outbox(session, stream)
 
+        # The relay maps each ORM row to a serialisable Event, so the broker
+        # sees the row's fields rather than the row object itself.
         assert stream.produce.await_count == 2
-        assert [c.args[0] for c in stream.produce.call_args_list] == events
+        produced = [c.args[0] for c in stream.produce.call_args_list]
+        assert [e.idempotency_key for e in produced] == ["telegram:1", "telegram:2"]
+        assert [e.payload for e in produced] == [{"text": "hi"}, {"text": "hi"}]
 
     @pytest.mark.asyncio
     async def test_marks_published_with_utc_timestamp(self, session, stream, results):
@@ -192,7 +197,9 @@ class TestPublishOutboxTransitions:
         event = make_event()
         results([event])
         seen = []
-        stream.produce.side_effect = lambda e: seen.append(e.status)
+        # Capture the row's status at the moment the broker call happens: it
+        # must still be unset, proving publish precedes the transition.
+        stream.produce.side_effect = lambda e: seen.append(event.status)
 
         await publish_outbox(session, stream)
 
@@ -247,6 +254,18 @@ class TestPublishOutboxFailures:
 
         with pytest.raises(RuntimeError, match="commit failed"):
             await publish_outbox(session, stream)
+
+
+class TestOutboxEventSchema:
+    def test_idempotency_key_fits_a_realistic_whatsapp_key(self):
+        # WhatsApp wamid keys are 40-60+ characters; with the "whatsapp:"
+        # prefix a String(30) column raises DataError at commit against a real
+        # PostgreSQL — a 500 on every webhook that every mocked session hides.
+        column = OutboxEvent.__table__.c.idempotency_key
+        realistic_key = "whatsapp:wamid." + "A" * 60
+
+        assert column.type.length is not None
+        assert len(realistic_key) <= column.type.length
 
 
 class TestOutboxWorkerLoop:
