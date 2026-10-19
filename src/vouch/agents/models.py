@@ -1,10 +1,15 @@
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal
+import operator
+from typing import Annotated, Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from vouch.agents.llm import LLMClient
+from vouch.ledger.ledger import Ledger
 from vouch.security import EntityRef, Provenance, TrustLevel
+from vouch.tools.gateway import ToolGateway
 from vouch.tools.models import ToolCallRequest
 
 
@@ -20,8 +25,8 @@ class ClaimType(str, Enum):
     FACTUAL = "factual"
     INFERENTIAL = "inferential"
 
-class Claim(BaseModel):
-    claim_id: str
+class Hypotheses(BaseModel):
+    hypotheses_id: str
     investigation_id: str
     snapshot_id: str # claim_id only valid for a particular snapshot_id
     subject: EntityRef | Literal["SUBMISSION"]
@@ -38,10 +43,9 @@ class Claim(BaseModel):
 
 class AgentRole(str, Enum):
     ORCHESTRATOR = "orchestrator"
-    ANALYST = "analyst"
-    WEB_SEARCH = "web_search"
-    SMD_CSD = "smd_csd"
-    AUDITOR = "auditor"
+    HYPOTHESIS_AGENT = "hypotheses_agent"
+    VERIFIER = "verifier"
+    SYNTHESIS = "synthesis"
 
 class Agent(BaseModel):
     agent_id: str
@@ -74,13 +78,6 @@ class AgentMessage(BaseModel):
     evidence_refs: list[str] = Field(default_factory=list)
     created_at: datetime
 
-Capability = Literal[
-    "vision",
-    "json_schema",
-    "tools",
-    "streaming"
-]
-
 class LLMProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -89,10 +86,35 @@ class LLMProfile(BaseModel):
     base_url: str = ""
     api_key: str | None = None
 
-    capabilities: set[Capability] = Field(default_factory=set)
+    capabilities: list[Literal["vision", "json_schema", "tools", "streaming"]] = Field(default_factory=list)
     timeout_sec: float = Field(default=60, gt=0)
     max_retries: int = Field(default=3, ge=0, le=5)
     model_kwargs: dict[str, Any] = Field(default_factory=dict)
 
     temperature: float = 1.0
     max_tokens: int = 1000
+
+class Task(BaseModel):
+    ...
+
+class Synthesis(BaseModel):
+    ...
+
+class InvestigationState(TypedDict):
+    investigation_id: str
+
+    tasks: Annotated[list[Task], operator.add]
+    hypotheses: Annotated[list[Hypotheses], operator.add]
+
+    verdict: Literal["resolved", "inconclusive", "insufficient"] | None
+    synthesis: Synthesis
+
+    exhausted: Literal["recursion", "budget", "timeout"] | None
+    inconclusive: bool
+
+@dataclass
+class RuntimeDeps:
+    llm: LLMClient
+    gateway: ToolGateway
+    ledger: Ledger
+    profiles: dict[AgentRole, LLMProfile]
