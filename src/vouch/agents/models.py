@@ -1,15 +1,12 @@
-from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 import operator
+from pathlib import Path
 from typing import Annotated, Any, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from vouch.agents.llm import LLMClient
-from vouch.ledger.ledger import Ledger
 from vouch.security import EntityRef, Provenance, TrustLevel
-from vouch.tools.gateway import ToolGateway
 from vouch.tools.models import ToolCallRequest
 
 
@@ -46,6 +43,9 @@ class AgentRole(str, Enum):
     HYPOTHESIS_AGENT = "hypotheses_agent"
     VERIFIER = "verifier"
     SYNTHESIS = "synthesis"
+    APK_AGENT = "apk_agent"
+    URL_AGENT = "url_agent"
+    ARTIFACT_AGENT = "artifact_agent"
 
 class Agent(BaseModel):
     agent_id: str
@@ -73,7 +73,7 @@ class AgentMessage(BaseModel):
     sender_agent_id: str
     receiver_agent_id: str
     message_type: MessageType
-    claims: list[Claim] = Field(default_factory=list)
+    claims: list[Hypotheses] = Field(default_factory=list)
     tool_requests: list[ToolCallRequest] = Field(default_factory=list)
     evidence_refs: list[str] = Field(default_factory=list)
     created_at: datetime
@@ -81,10 +81,11 @@ class AgentMessage(BaseModel):
 class LLMProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: str
+    model: str
     alias: str = ""
     base_url: str = ""
     api_key: str | None = None
+    system_prompt_path: Path
 
     capabilities: list[Literal["vision", "json_schema", "tools", "streaming"]] = Field(default_factory=list)
     timeout_sec: float = Field(default=60, gt=0)
@@ -107,14 +108,9 @@ class InvestigationState(TypedDict):
     hypotheses: Annotated[list[Hypotheses], operator.add]
 
     verdict: Literal["resolved", "inconclusive", "insufficient"] | None
-    synthesis: Synthesis
+    synthesis: Synthesis | None
 
     exhausted: Literal["recursion", "budget", "timeout"] | None
     inconclusive: bool
 
-@dataclass
-class RuntimeDeps:
-    llm: LLMClient
-    gateway: ToolGateway
-    ledger: Ledger
-    profiles: dict[AgentRole, LLMProfile]
+    iterations: int

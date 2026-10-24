@@ -1,0 +1,4 @@
+- [Explainable SMS Phishing Detection using LLM-based Agents](https://www.usenix.org/system/files/soups2025-wang.pdf)
+- [Explainable Agentic System for CSD](https://arxiv.org/pdf/2607.11707)
+- [Cogentic: Multi-Agent Orchestration for Automated Proof Discovery](https://arxiv.org/pdf/2609.40324)
+- [MemoPhishAgent](https://aclanthology.org/2026.acl-industry.84.pdf)
