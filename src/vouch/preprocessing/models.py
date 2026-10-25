@@ -27,12 +27,13 @@ class EntityType(str, Enum):
     APK_PACKAGE = "apk_package"
     FILE_SHA256 = "file_sha256"
     BRAND = "brand"
+    NAME = "name"
 
 class ExtractedEntity(BaseModel):
     type: EntityType
-    normalized_value: str
     extracted_value: str
-    source_field: Literal["text", "ocr", "qr", "image"]
+    normalized_value: str = ""
+    source_field: Literal["text", "document", "qr", "image"] | None = None
 
 class Pattern(BaseModel):
     pattern: str
@@ -50,4 +51,4 @@ class CanonicalMessage(BaseModel):
     submission_id: str
     text_forms: TextForms
     entities: list[ExtractedEntity]
-    modalities_present: list[Modality]
+    modalities: dict[str, Modality]
