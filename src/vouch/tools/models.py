@@ -63,4 +63,3 @@ class AgentContext(BaseModel):
     agent_id: str
     allowed_tools: list[ToolDefinition]
     network_policy: Literal["none", "search_only"] = "none"
-    tool_call_budget: None

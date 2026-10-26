@@ -28,6 +28,7 @@ class EntityType(str, Enum):
     FILE_SHA256 = "file_sha256"
     BRAND = "brand"
     NAME = "name"
+    OTHER = "other"
 
 class ExtractedEntity(BaseModel):
     type: EntityType
