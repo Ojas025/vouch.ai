@@ -10,12 +10,12 @@ from redis import ResponseError
 from redis.asyncio import Redis, ConnectionPool
 
 from vouch.ingestion import Event
+from vouch.logger import get_logger
 from vouch.observability.propagation import inject_trace_context
 
+logger = get_logger(__file__)
 
 def _jsonable(payload: Any) -> Any:
-    """Shallow dataclass->dict conversion. Shallow on purpose: asdict deep-copies
-    every leaf, and payload holds the raw provider webhook body."""
     if is_dataclass(payload) and not isinstance(payload, type):
         return {f.name: getattr(payload, f.name) for f in fields(payload)}
     return payload
@@ -26,7 +26,7 @@ class EventStream:
         self.stream_name = stream_name
 
         self.pool = ConnectionPool.from_url(url=redis_url, max_connections=20, decode_responses=True)
-        self.client = Redis(connection_pool=self.pool)
+        self.client = Redis(connection_pool=self.pool, decode_responses=True)
 
     async def produce(self, payload: Event, trace_context: dict | None = None) -> bytes | str:
         """Producer method: appends a task to the event stream.
@@ -75,8 +75,37 @@ class EventStream:
             block=block_ms
         )
 
-    async def recover(self, consumer_id: str, min_idle_ms: int, count: int = 10):
+    async def recover(self, group_name: str, consumer_name: str, min_idle_ms: int, count: int = 10):
         """"""
+        cursor = "0-0"
+
+        while True:
+            response = await self.client.xautoclaim(
+                name=self.stream_name,
+                groupname=group_name,
+                consumername=consumer_name,
+                min_idle_time=min_idle_ms,
+                start_id=cursor, count=count
+            )
+
+            cursor = response[0]
+            messages = response[1]
+            deleted_ids = response[2]
+
+            if messages:
+                yield messages
+
+            if deleted_ids:
+                logger.warning(
+                    "deleted stream entries removed from pending list",
+                    extra={
+                        "event": "job.pending_entries_deleted",
+                        "count": len(deleted_ids)
+                    }
+                )
+
+            if cursor in ("0-0", b"0-0"):
+                break
 
     async def ack(self, group_name: str, message_id: str):
         """Acknowledge and mark the message as processed, removing it from the pending entries list (PEL)"""

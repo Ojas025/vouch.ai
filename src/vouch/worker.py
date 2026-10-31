@@ -1,7 +1,11 @@
 import asyncio
+import time
 import json
 import os
 
+from redis import RedisError
+from vouch import pipeline
+from vouch.idempotency import IdempotencyStatus
 from vouch.logger import configure_logging, get_logger
 from vouch.observability.context import bind_correlation
 from vouch.observability.propagation import extract_trace_context
@@ -10,43 +14,77 @@ from vouch.queue.stream import EventStream
 
 """
 Idempotency - A worker can process -> crash before XACK
-
 """
 
-STREAM = "jobs"
-GROUP = "workers"
+STREAM = "vouch:jobs"
+GROUP = "vouch-workers"
 CONSUMER = os.getenv("HOSTNAME", "worker-1")
+
+PROCESSING_TTL = 300
+COMPLETED_TTL = 86400 * 7
+
+RECOVERY_INTERVAL = 30
 
 logger = get_logger(__name__)
 
 class Worker:
-    def __init__(self, stream: EventStream, handler, consumer_id: str):
+    def __init__(self, stream: EventStream, consumer_id: str):
         # The handler is injected rather than imported: it is the seam where
         # the pipeline runner plugs in, and it keeps this module importable
         # without dragging the whole pipeline/router chain along.
         self.stream = stream
-        self.handler = handler
         self.consumer_id = consumer_id
+        self.last_recovery = time.monotonic()
 
     async def run(self) -> None:
         while True:
-            batches = await self.stream.consume(GROUP, self.consumer_id, 10)
+            try:
+                results = await self.stream.consume(GROUP, self.consumer_id, 10)
 
-            # XREADGROUP replies with a (stream_name, entries) pair per stream.
-            for _stream_name, entries in batches:
-                for entry in entries:
-                    await self.process(entry)
+                # XREADGROUP replies with a (stream_name, entries) pair per stream.
+                for _, messages in results:
+                    await self.handle_messages(messages)
 
-    async def process(self, entry) -> None:
-        message_id, fields = entry
-        event = json.loads(fields["data"])
-        idempotency_key = event["idempotency_key"]
+                now = time.monotonic()
 
+                if now - self.last_recovery >= RECOVERY_INTERVAL:
+                    async for messages in self.stream.recover(GROUP, self.consumer_id, min_idle_ms=60_000, count=10):
+                        await self.handle_messages(messages)
+
+                    self.last_recovery = now
+
+            except RedisError as r:
+                logger.error(f"Redis error: {str(r)}")
+                await asyncio.sleep(2)
+
+    async def handle_messages(self, messages):
+        for message_id, fields in messages:
+            try:
+                event = json.loads(fields["data"])
+                idempotency_key = event["idempotency_key"]
+
+                await self.process_job(message_id, event, idempotency_key)
+
+            except Exception as e:
+                logger.error(
+                    "job handler failed",
+                    extra={
+                        "event": "job.failed",
+                        "component": "worker",
+                        "consumer_id": self.consumer_id,
+                        "error_category": type(e).__name__,
+                        "outcome": "failure",
+                    },
+                    exc_info=True,
+                )
+                continue
+
+            await self.stream.ack(GROUP, message_id)
+
+    async def process_job(self, message_id, event, idempotency_key) -> None:
         parent = extract_trace_context(event)
 
-        claimed = await self.stream.client.set(
-            idempotency_key, "processing", nx=True, ex=3600
-        )
+        claimed = await self.stream.client.set(idempotency_key, IdempotencyStatus.PROCESSING, nx=True, ex=PROCESSING_TTL)
 
         if not claimed:
             # Duplicate event
@@ -59,7 +97,6 @@ class Worker:
                     "consumer_id": self.consumer_id,
                 },
             )
-            await self.stream.ack(GROUP, message_id)
             return
 
         logger.info(
@@ -79,8 +116,7 @@ class Worker:
                 context=parent,
             ):
                 with bind_correlation(job_id=idempotency_key):
-                    await self.handler.handle(event["payload"])
-            await self.stream.ack(GROUP, message_id)
+                    await pipeline.run(event)
             logger.info(
                 "job handled and acknowledged",
                 extra={
@@ -108,17 +144,15 @@ class Worker:
             raise
 
 class WorkerPool:
-    def __init__(self, stream: EventStream, handler, total_workers: int):
+    def __init__(self, stream: EventStream, total_workers: int):
         self.stream = stream
-        self.handler = handler
         self.total_workers = total_workers
 
     async def run(self):
         workers = [
             Worker(
-                consumer_id=f"worker-{i}",
+                consumer_id=f"{CONSUMER}-worker-{i}",
                 stream=self.stream,
-                handler=self.handler,
             )
             for i in range(self.total_workers)
         ]
@@ -127,15 +161,8 @@ class WorkerPool:
             *(worker.run() for worker in workers)
         )
 
-# --- Crash recovery (moved from worker/recovery.py) ---
-
-async def recover():
-   pass
-
-# Must match the stream the API producer writes to in vouch.api.server.
 EVENTS_STREAM = "events:stream"
 MAX_WORKERS = int(os.getenv("VOUCH_WORKER_COUNT", "4"))
-
 
 async def main() -> None:
     """Entrypoint for the consumer pool. The group must exist before XREADGROUP."""
@@ -145,10 +172,16 @@ async def main() -> None:
         stream_name=EVENTS_STREAM,
     )
 
-    await stream.ensure_group(GROUP)
+    try:
+        await stream.ensure_group(GROUP)
 
-    # TODO: inject the pipeline handler; WorkerPool requires one at construction.
-    await WorkerPool(stream=stream, handler=None, total_workers=MAX_WORKERS).run()
+        await WorkerPool(
+            stream=stream,
+            total_workers=MAX_WORKERS
+        ).run()
+
+    finally:
+        await stream.close()
 
 
 if __name__ == "__main__":
