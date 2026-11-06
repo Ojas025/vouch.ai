@@ -3,6 +3,7 @@ from enum import Enum
 import uuid
 
 from sqlalchemy import (
+    TIMESTAMP,
     Boolean,
     BigInteger,
     CheckConstraint,
@@ -32,7 +33,17 @@ from vouch.utils import uuid7
 """
 
 class Submission(Base):
+    """An incoming event that the application has accepted."""
+
     __tablename__ = "submissions"
+    __table_args__ = (
+        UniqueConstraint(
+            "channel",
+            "provider_account_id",
+            "provider_event_id",
+            name="uq_submission"
+        )
+    )
 
     # Primary Key
     id: Mapped[uuid.UUID] = mapped_column(
@@ -43,10 +54,11 @@ class Submission(Base):
 
     payload: Mapped[str] = mapped_column(Text)
     sha256_digest: Mapped[str] = mapped_column(String)
-    state: Mapped[str] = mapped_column(String(20), server_default="RECEIVED")
+    status: Mapped[str] = mapped_column(String(20), server_default="received")
 
     channel: Mapped[str]
-    idempotency_key: Mapped[str]
+    provider_account_id: Mapped[str] = mapped_column(String, nullable=False)
+    provider_event_id: Mapped[str] = mapped_column(String, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -69,7 +81,7 @@ class OutboxEvent(Base):
     )
 
     channel: Mapped[str] = mapped_column(String(20))
-    idempotency_key: Mapped[str] = mapped_column(String(128))
+    # idempotency_key: Mapped[str] = mapped_column(String(128))
     payload: Mapped[dict] = mapped_column(JSONB)
 
     # W3C context of the request that created this row; null on older rows.
@@ -90,7 +102,64 @@ class OutboxEvent(Base):
     )
 
 class Investigations(Base):
+    """An investigation that your application intends to execute. Possible multiple per submission."""
+
     __tablename__ = "investigations"
+    __table_args__ = (
+        CheckConstraint(
+            """
+            status IN (
+                'RECEIVED',
+                'PROCESSING',
+                'COMPLETED',
+                'DEAD',
+                'FAILED',
+                'RETRY'
+            )
+            """,
+            name="ck_inv_execution_status"
+        ),
+
+        CheckConstraint(
+            """
+            attempts >= 0 AND max_attempts > 0
+            AND attempts <= max_attempts
+            """,
+            name="ck_inv_execution_attempts"
+        ),
+
+        CheckConstraint(
+            """
+            (
+                status = 'processing'
+                AND lease_owner IS NULL
+                AND lease_expires_at IS NULL
+                AND lease_renewed_at IS NULL
+            ) OR
+            (
+                status <> 'processing'
+                AND lease_owner is NOT NULL
+                AND lease_expires_at IS NOT NULL
+                AND lease_renewed_at IS NOT NULL
+            )
+            """,
+            name="ck_inv_lease_consistency"
+        ),
+
+        CheckConstraint(
+            """
+            status <> 'retry'
+            OR not_before IS NOT NULL
+            """
+        ),
+
+        Index(
+            "uq_initial_inv_per_submission",
+            "submission_id",
+            unique=True,
+            postgresql_where=text("reason = 'initial'"),
+        )
+    )
 
     investigation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -100,12 +169,37 @@ class Investigations(Base):
 
     submission_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("submissions.id"),
-        index=True,
     )
 
+    payload: Mapped[str] = mapped_column(Text)
+    sha256_digest: Mapped[str] = mapped_column(String)
+
     reason: Mapped[str] = mapped_column(String(20))  # "initial" | "re-evidence" | "manual"
-    state: Mapped[str] = mapped_column(String(20), server_default="RECEIVED")
+    status: Mapped[str] = mapped_column(String(20), server_default="received")
+
+    attempts: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    max_attempts: Mapped[int] = mapped_column(Integer, server_default=text("3"))
+    not_before: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    lease_owner: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+    lease_renewed_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+    fencing_token: Mapped[int] = mapped_column(BigInteger, server_default=text("0"))
+
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -116,6 +210,11 @@ class Investigations(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
     )
 
 class Ledger(Base):

@@ -1,34 +1,35 @@
-import asyncio
+from typing import Any
+from uuid import UUID
 
 from vouch.agents.agents import graph
 from vouch.agents.models import InvestigationState
-from vouch.agents.registry import PROFILES
 from vouch.docling import parse_attachments
-from vouch.ledger.ledger import Ledger
-from vouch.ledger.models import EvidenceDraft
-from vouch.downloader import download_media, route
-from vouch.decision import DecisionRecord
-from vouch.ingestion import Event, IncomingMessage
+from vouch.downloader import download_media
+from vouch.ingestion import IncomingMessage
 from vouch.logger import get_logger
 from vouch.preprocessing.adapter import adapt
+from vouch.preprocessing.models import CanonicalMessage
 from vouch.preprocessing.preprocess import extract_entities_using_llm, preprocess
-from vouch.tools.gateway import ToolGateway
-from vouch.tools.rate_limit import RateLimiter
-from vouch.tools.registry import ToolRegistry
-from vouch.utils import uuid7
+from vouch.utils import retry, uuid7
 
 logger = get_logger(__file__)
 
-def investigate():
+@retry(max_attempts=3)
+async def investigate(msg: CanonicalMessage):
     initial_state: InvestigationState = {
-        "investigation_id": str(uuid7()),
+        "investigation_id": uuid7(),
         "tasks": [],
         "hypotheses": [],
         "verdict": None,
         "synthesis": None,
         "exhausted": None,
         "inconclusive": False,
+        "input_msg": msg.text_forms.confusable_skeleton,
+        "iterations": 0,
+        "stage": "orchestration"
     }
+
+    # persist in db with investigation_id & status
 
     return graph.invoke(
         initial_state,
@@ -37,16 +38,16 @@ def investigate():
         }
     )
 
-async def run(event: Event):
+async def run(channel: str, submission_id: UUID, investigation_id: UUID, payload: Any):
     # adapt to IncomingMessage
-    msg: IncomingMessage = adapt(event)
+    msg: IncomingMessage = adapt(channel, str(submission_id), str(investigation_id), payload)
 
     if len(msg.media) > 0:
         logger.exception("Media cannot be handled yet!")
         raise
 
     # preprocessing
-    canonical_msg = preprocess(msg)
+    canonical_msg: CanonicalMessage = preprocess(msg)
 
     # - download media
     await download_media(msg, canonical_msg)
@@ -59,12 +60,12 @@ async def run(event: Event):
     # - llm-based extraction
     await extract_entities_using_llm(text, canonical_msg)
 
-    # agentic reasoning
-    # parallel fan-out
-    # fan-in: single ledger writer
-    decision = investigate()
+    try:
+        # agentic reasoning
+        # parallel fan-out
+        # fan-in: single ledger writer
+        result = await investigate(canonical_msg)
+        return result
 
-    # persist decision
-    persist_decision(decision)
-
-    send_message(decision)
+    except Exception:
+        raise

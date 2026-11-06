@@ -1,14 +1,13 @@
 import hashlib
 from pathlib import Path
 from fastapi import HTTPException
-from pydantic import BaseModel
 import requests
 import httpx
 
 from vouch.config import settings
-from vouch.ingestion import AttachmentMetadata, Channel, IncomingMessage, MediaDownloadMetadata
+from vouch.ingestion import Channel, IncomingMessage, MediaDownloadMetadata
 from vouch.logger import get_logger
-from vouch.preprocessing.models import CanonicalMessage, Modality
+from vouch.preprocessing.models import CanonicalMessage
 from vouch.utils import delete_from_path, retry
 
 """

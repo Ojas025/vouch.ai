@@ -5,7 +5,8 @@ Adapter for converting raw Telegram or Whatsapp payload into canonical MessageSu
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
+from uuid import UUID
 
 from vouch.ingestion import (
     AttachmentMetadata,
@@ -14,7 +15,7 @@ from vouch.ingestion import (
     IncomingMessage,
 )
 
-def _adapt_whatsapp(raw_payload: dict[str, Any]) -> IncomingMessage:
+def _adapt_whatsapp(raw_payload: dict[str, Any], submission_id: str, investigation_id: str) -> IncomingMessage:
     """Adapt a Meta WhatsApp Cloud API webhook payload to IncomingMessage.
 
     Expected payload shape (abbreviated):
@@ -85,8 +86,9 @@ def _adapt_whatsapp(raw_payload: dict[str, Any]) -> IncomingMessage:
     sent_at = datetime.fromtimestamp(int(msg["timestamp"]), tz=timezone.utc)
 
     return IncomingMessage(
-        submission_id=msg["id"],
+        submission_id=submission_id,
         channel=Channel.WHATSAPP,
+        investigation_id=investigation_id,
         provider="whatsapp",
         message_id=msg["id"],
         text=text,
@@ -106,7 +108,7 @@ def _adapt_whatsapp(raw_payload: dict[str, Any]) -> IncomingMessage:
     )
 
 
-def _adapt_telegram(raw_payload: dict[str, Any]) -> IncomingMessage:
+def _adapt_telegram(raw_payload: dict[str, Any], submission_id: str, investigation_id: str) -> IncomingMessage:
     """Adapt a Telegram Bot API webhook update to IncomingMessage.
 
     Expected payload shape (abbreviated):
@@ -166,8 +168,9 @@ def _adapt_telegram(raw_payload: dict[str, Any]) -> IncomingMessage:
     sent_at = datetime.fromtimestamp(msg["date"], tz=timezone.utc)
 
     return IncomingMessage(
-        submission_id=str(raw_payload["update_id"]),
+        submission_id=submission_id,
         channel=Channel.TELEGRAM,
+        investigation_id=investigation_id,
         provider="telegram",
         message_id=str(msg["message_id"]),
         text=msg.get("text", "") or msg.get("caption", ""),
@@ -187,7 +190,7 @@ def _adapt_telegram(raw_payload: dict[str, Any]) -> IncomingMessage:
     )
 
 
-def adapt(event: Event) -> IncomingMessage:
+def adapt(channel: str, submission_id: str, investigation_id: str, payload: Any) -> IncomingMessage:
     """Dispatch on the event's channel.
 
     Anything that is not a supported provider channel is rejected loudly:
@@ -195,10 +198,10 @@ def adapt(event: Event) -> IncomingMessage:
     an opaque KeyError (or silently misparse a payload that happens to carry
     the same keys).
     """
-    if event.channel == "whatsapp":
-        return _adapt_whatsapp(event.payload)
 
-    if event.channel == "telegram":
-        return _adapt_telegram(event.payload)
-
-    raise ValueError(f"unsupported channel: {event.channel}")
+    if channel == "whatsapp":
+        return _adapt_whatsapp(payload, submission_id, investigation_id)
+    elif channel == "telegram":
+        return _adapt_telegram(payload, submission_id, investigation_id)
+    else:
+        raise ValueError(f"unsupported channel: {channel}")
