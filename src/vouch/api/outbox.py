@@ -65,7 +65,7 @@ async def outbox_worker(stream: EventStream):
         async with SessionLocal() as session:
             await publish_outbox(session, stream)
 
-        await sleep(2)
+        await sleep(5)
 
 # Must match the stream the API producer writes to in vouch.api.server.
 EVENTS_STREAM = "events:stream"
