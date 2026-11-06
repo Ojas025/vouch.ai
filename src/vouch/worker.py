@@ -11,10 +11,12 @@ from redis import RedisError
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from dotenv import load_dotenv
+
 from vouch import pipeline
 from vouch.db.models import Investigations, Submission
 from vouch.db.session import SessionLocal
-from vouch.investigation import complete_investigation, handle_failure
+from vouch.investigation import ExecutionOutcome, InvalidLease, complete_investigation, handle_failure
 from vouch.lease import LEASE_TTL, LeaseKeeper, LeaseManager
 from vouch.logger import configure_logging, get_logger
 from vouch.observability.context import bind_correlation
@@ -26,9 +28,13 @@ from vouch.utils import uuid7
 """
 Idempotency - A worker can process -> crash before XACK
 """
+load_dotenv()
 
-STREAM = "vouch:jobs"
-GROUP = "vouch-workers"
+STREAM_KEY = os.getenv("JOB_QUEUE_STREAM_KEY", "vouch:jobs")
+DLQ_STREAM_KEY = os.getenv("JOB_QUEUE_DEAD_LETTER_STREAM_KEY", "vouch:jobs:dead")
+
+CONSUMER_GROUP = os.getenv("JOB_QUEUE_GROUP_NAME", "vouch-workers")
+MAX_WORKERS = int(os.getenv("VOUCH_WORKER_COUNT", "4"))
 
 RECOVERY_INTERVAL = 30
 RENEW_INTERVAL = LEASE_TTL / 3
@@ -103,10 +109,6 @@ async def get_or_create_investigation(session_factory: async_sessionmaker[AsyncS
 
     return investigation, is_duplicate
 
-class DuplicateRequest(Exception):
-    """Duplicate request encountered"""
-    ...
-
 class LeaseAcquisitionFailed(Exception):
     def __init__(self, message: str):
         self.message = message
@@ -127,7 +129,7 @@ class Worker:
     async def run(self) -> None:
         while True:
             try:
-                results = await self.stream.consume(GROUP, str(self.worker_id), 10)
+                results = await self.stream.consume(CONSUMER_GROUP, str(self.worker_id), 10)
 
                 # XREADGROUP replies with a (stream_name, entries) pair per stream.
                 for _, messages in results:
@@ -136,7 +138,7 @@ class Worker:
                 now = time.monotonic()
 
                 if now - self.last_recovery >= RECOVERY_INTERVAL:
-                    async for messages in self.stream.recover(GROUP, str(self.worker_id), min_idle_ms=60_000, count=10):
+                    async for messages in self.stream.recover(CONSUMER_GROUP, str(self.worker_id), min_idle_ms=60_000, count=10):
                         await self.handle_messages(messages)
 
                     self.last_recovery = now
@@ -150,7 +152,23 @@ class Worker:
             try:
                 event = json.loads(fields["data"])
 
-                await self.process_job(message_id, event)
+                outcome: ExecutionOutcome = await self.process_job(message_id, event)
+
+                match outcome:
+
+                    case ExecutionOutcome.COMPLETED:
+                        # acknowledge completion
+                        ...
+
+                    case ExecutionOutcome.RETRY:
+                        # schedule retry -> acknowledge
+                        ...
+
+                    case ExecutionOutcome.DEAD:
+                        # dead-letter -> acknowledge
+                        ...
+
+                await self.stream.ack(CONSUMER_GROUP, message_id)
 
             except ValidationError as e:
                 logger.error(
@@ -162,16 +180,30 @@ class Worker:
                         "error_category": type(e).__name__,
                     }
                 )
+
+                # dead-letter -> ack
                 continue
 
-            except DuplicateRequest as d:
-                logger.error(
-                    "duplicate investigation request",
+            except InvalidLease:
+                logger.warning(
+                    "Investigation lease lost; leaving message pending",
                     extra={
-                        "event": "job.duplicate",
+                        "event": "job.lease_lost",
                         "component": "worker",
                         "worker_id": self.worker_id,
-                        "error_category": type(d).__name__,
+                        "message_id": message_id,
+                    }
+                )
+                continue
+
+            except LeaseAcquisitionFailed:
+                logger.info(
+                    "Lease unavailable; leaving message pending",
+                    extra={
+                        "event": "job.lease_unavailable",
+                        "component": "worker",
+                        "worker_id": self.worker_id,
+                        "message_id": message_id,
                     }
                 )
                 continue
@@ -189,8 +221,6 @@ class Worker:
                     exc_info=True,
                 )
                 continue
-
-            await self.stream.ack(GROUP, message_id)
 
     async def process_job(self, message_id: str, event) -> Any:
         parent = extract_trace_context(event)
@@ -239,63 +269,65 @@ class Worker:
                         )
 
                     keeper = LeaseKeeper(self.leases, lease)
+
                     keeper.start()
 
-                    processing = asyncio.create_task(pipeline.run(
-                        channel=event["channel"],
-                        submission_id=investigation.submission_id,
-                        investigation_id=investigation.investigation_id,
-                        payload=investigation.payload,
-                    ))
+                    processing = None
+                    wait_for_loss = None
 
-                    wait_for_loss = asyncio.create_task(keeper.wait_for_loss())
+                    try:
+                        processing = asyncio.create_task(pipeline.run(
+                            channel=event["channel"],
+                            submission_id=investigation.submission_id,
+                            investigation_id=investigation.investigation_id,
+                            payload=investigation.payload,
+                        ))
 
-                    done, pending = await asyncio.wait(
-                        [processing, wait_for_loss],
-                        return_when=asyncio.FIRST_COMPLETED
-                    )
+                        wait_for_loss = asyncio.create_task(keeper.wait_for_loss())
 
-                    if wait_for_loss in done:
-                        # lease renewal failed
-                        processing.cancel()
+                        done, _ = await asyncio.wait(
+                            [processing, wait_for_loss],
+                            return_when=asyncio.FIRST_COMPLETED
+                        )
+
+                        if wait_for_loss in done:
+                            # lease renewal failed
+                            processing.cancel()
+
+                            await asyncio.gather(
+                                processing,
+                                return_exceptions=True
+                            )
+
+                            raise InvalidLease(
+                                f"Lease lost during processing for worker - {self.worker_id}"
+                            )
+
+                        try:
+                            result = await processing
+
+                        except Exception as e:
+                            logger.exception("Pipeline execution failed")
+                            outcome = await handle_failure(str(e), keeper.lease, 10.0)
+
+                        else:
+                            outcome = await complete_investigation(result, keeper.lease)
+
+                        return outcome
+
+                    finally:
+                        if processing and not processing.done():
+                            processing.cancel()
+
+                        if wait_for_loss and not wait_for_loss.done():
+                            wait_for_loss.cancel()
 
                         await asyncio.gather(
-                            processing,
+                            *[processing, wait_for_loss],
                             return_exceptions=True
                         )
 
                         await keeper.stop()
-
-                        raise LeaseAcquisitionFailed(
-                            f"Lease lost during processing for worker - {self.worker_id}"
-                        )
-
-                    result = None
-                    try:
-                        result = await processing
-
-                    except Exception as e:
-                        logger.exception(f"Pipeline execution failed: {str(e)}")
-                        await handle_failure(str(e), keeper.lease)
-
-                    finally:
-                        wait_for_loss.cancel()
-
-                        await wait_for_loss
-                        await keeper.stop()
-
-                    if result is not None:
-                        await complete_investigation(result, keeper.lease)
-
-            logger.info(
-                "job handled and acknowledged",
-                extra={
-                    "event": "job.completed",
-                    "component": "worker",
-                    "worker_id": self.worker_id,
-                    "outcome": "ok",
-                },
-            )
 
         except ValidationError as e:
             logger.error(
@@ -323,8 +355,6 @@ class Worker:
             )
             raise
 
-        return result
-
 class WorkerPool:
     def __init__(self, stream: EventStream, leases: LeaseManager, total_workers: int):
         self.stream = stream
@@ -345,22 +375,19 @@ class WorkerPool:
             *(worker.run() for worker in workers)
         )
 
-EVENTS_STREAM = "events:stream"
-MAX_WORKERS = int(os.getenv("VOUCH_WORKER_COUNT", "4"))
-
 async def main() -> None:
     """Entrypoint for the consumer pool. The group must exist before XREADGROUP."""
     configure_logging()
 
     stream = EventStream(
         redis_url=os.environ["REDIS_URL"],
-        stream_name=EVENTS_STREAM,
+        stream_name=STREAM_KEY,
     )
 
     leases = LeaseManager(SessionLocal())
 
     try:
-        await stream.ensure_group(GROUP)
+        await stream.ensure_group(CONSUMER_GROUP)
 
         await WorkerPool(
             stream=stream,

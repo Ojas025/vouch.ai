@@ -13,6 +13,22 @@ from vouch.ingestion import Event
 from vouch.logger import get_logger
 from vouch.observability.propagation import inject_trace_context
 
+"""
+Lease:
+    while (true) {
+        request = getIncomingRequest()
+
+        if (lease.expiry - now() < 10000) {
+            lease = lease.renew()
+        }
+
+        if (lease.valid()) {
+            process(request)
+        }
+    }
+"""
+
+
 logger = get_logger(__file__)
 
 def _jsonable(payload: Any) -> Any:
