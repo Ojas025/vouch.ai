@@ -3,9 +3,9 @@ from contextlib import asynccontextmanager
 import json
 import hashlib
 from dotenv import load_dotenv
-import os
 
 from vouch.api.ingestion import WebhookIngestionService
+from vouch.config import settings
 from vouch.db.session import SessionLocal
 from vouch.logger import configure_logging, get_logger, shutdown_logging
 from vouch.security import verify_telegram_token, verify_whatsapp_signature
@@ -21,11 +21,16 @@ provider_event_id:
 - Whatsapp -> messages[0].id
 """
 
-WHATSAPP_SECRET = os.environ["WHATSAPP_SECRET"]
-TELEGRAM_WEBHOOK_SECRET = os.environ["TELEGRAM_WEBHOOK_SECRET"]
-REDIS_URL = os.environ["REDIS_URL"]
+# Settings-derived aliases. Fail closed at import, as the previous
+# os.environ[...] reads did: an empty secret would let a caller forge an
+# HMAC against the empty key. The names are read by
+# tests/v1/integration/test_webhook_outbox_e2e.py at import time.
+if not settings.whatsapp_secret or not settings.telegram_webhook_secret:
+    raise RuntimeError("WHATSAPP_SECRET and TELEGRAM_WEBHOOK_SECRET must be set")
+WHATSAPP_SECRET = settings.whatsapp_secret
+TELEGRAM_WEBHOOK_SECRET = settings.telegram_webhook_secret
 
-stream = EventStream(redis_url=REDIS_URL, stream_name="events:stream")
+stream = EventStream(redis_url=settings.redis_url, stream_name=settings.events_stream)
 ingestion_service = WebhookIngestionService(SessionLocal)
 
 @asynccontextmanager
@@ -56,7 +61,7 @@ async def whatsapp_webhook(request: Request):
     signature = request.headers.get("X-Hub-Signature-256", "")
 
     # verify signature
-    if not verify_whatsapp_signature(body, signature, WHATSAPP_SECRET):
+    if not verify_whatsapp_signature(body, signature, settings.whatsapp_secret):
         raise HTTPException(status_code=401) # Unauthorized
 
     payload_digest = str(hashlib.sha256(body))
@@ -81,7 +86,7 @@ async def telegram_webhook(request: Request):
     token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
 
     # Verify - did the provider actually send this
-    if not verify_telegram_token(body, token, TELEGRAM_WEBHOOK_SECRET):
+    if not verify_telegram_token(body, token, settings.telegram_webhook_secret):
         raise HTTPException(status_code=401)
 
     payload_digest = str(hashlib.sha256(body))

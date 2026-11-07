@@ -1,7 +1,6 @@
 import asyncio
 import time
 import json
-import os
 from typing import Any, Literal
 
 from datetime import datetime
@@ -14,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from dotenv import load_dotenv
 
 from vouch import pipeline
-from vouch.context import CONSUMER_GROUP, WorkerContext, init_worker_context
+from vouch.config import settings
+from vouch.context import WorkerContext, init_worker_context
 from vouch.db.models import Investigations, Submission
 from vouch.investigation import ExecutionOutcome, InvalidLease, complete_investigation, handle_failure
 from vouch.lease import LeaseKeeper
@@ -28,10 +28,6 @@ from vouch.utils import uuid7
 Idempotency - A worker can process -> crash before XACK
 """
 load_dotenv()
-
-MAX_WORKERS = int(os.getenv("VOUCH_WORKER_COUNT", "4"))
-
-RECOVERY_INTERVAL = 30
 
 logger = get_logger(__name__)
 
@@ -118,7 +114,7 @@ class Worker:
     async def run(self) -> None:
         while True:
             try:
-                results = await self.ctx.stream.consume(CONSUMER_GROUP, str(self.worker_id), 10)
+                results = await self.ctx.stream.consume(settings.job_queue_group_name, str(self.worker_id), 10)
 
                 # XREADGROUP replies with a (stream_name, entries) pair per stream.
                 for _, messages in results:
@@ -126,8 +122,8 @@ class Worker:
 
                 now = time.monotonic()
 
-                if now - self.last_recovery >= RECOVERY_INTERVAL:
-                    async for messages in self.ctx.stream.recover(CONSUMER_GROUP, str(self.worker_id), min_idle_ms=60_000, count=10):
+                if now - self.last_recovery >= settings.recovery_interval:
+                    async for messages in self.ctx.stream.recover(settings.job_queue_group_name, str(self.worker_id), min_idle_ms=60_000, count=10):
                         await self.handle_messages(messages)
 
                     self.last_recovery = now
@@ -152,14 +148,14 @@ class Worker:
                     case ExecutionOutcome.RETRY:
                         # nack -> scheduled for retry -> xautoclaim picks it up
                         logger.warning(f"Failed job investigation, scheduled for retry - {message_id}")
-                        await self.ctx.stream.nack(CONSUMER_GROUP, message_id)
+                        await self.ctx.stream.nack(settings.job_queue_group_name, message_id)
                         continue
 
                     case ExecutionOutcome.DEAD:
                         # dead-letter -> acknowledge
                         logger.warning(f"Exhausted investigation retries, job should drop dead - {message_id}")
 
-                await self.ctx.stream.ack(CONSUMER_GROUP, message_id)
+                await self.ctx.stream.ack(settings.job_queue_group_name, message_id)
 
             except ValidationError as e:
                 logger.error(
@@ -173,7 +169,7 @@ class Worker:
                 )
 
                 # dead-letter -> ack
-                await self.ctx.stream.ack(CONSUMER_GROUP, message_id)
+                await self.ctx.stream.ack(settings.job_queue_group_name, message_id)
 
                 continue
 
@@ -373,11 +369,11 @@ async def main() -> None:
     ctx = await init_worker_context()
 
     try:
-        await ctx.stream.ensure_group(CONSUMER_GROUP)
+        await ctx.stream.ensure_group(settings.job_queue_group_name)
 
         await WorkerPool(
             ctx=ctx,
-            total_workers=MAX_WORKERS,
+            total_workers=settings.worker_count,
         ).run()
 
     finally:

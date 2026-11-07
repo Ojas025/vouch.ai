@@ -1,11 +1,11 @@
 import asyncio
-import os
 
 from datetime import datetime, timezone
 from asyncio import sleep
 
 from sqlalchemy import select
 
+from vouch.config import settings
 from vouch.db.models import OutboxEvent
 from vouch.db.session import SessionLocal
 from vouch.logger import configure_logging, get_logger
@@ -59,16 +59,13 @@ async def outbox_worker(stream: EventStream):
 
         await sleep(5)
 
-# Must match the stream the API producer writes to in vouch.api.server.
-EVENTS_STREAM = "events:stream"
-
 
 async def main() -> None:
     """Entrypoint for the relay process that drains the outbox."""
     configure_logging()
     stream = EventStream(
-        redis_url=os.environ["REDIS_URL"],
-        stream_name=EVENTS_STREAM,
+        redis_url=settings.redis_url,
+        stream_name=settings.events_stream,
     )
 
     await outbox_worker(stream)

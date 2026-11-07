@@ -1,11 +1,10 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-import os
 
-POSTGRES_URL = os.environ["POSTGRES_URL"]
+from vouch.config import settings
 
 # Long-lived db connectivity, owns the connection pool
 engine = create_async_engine(
-    POSTGRES_URL,
+    settings.postgres_url,
     echo=False,
     pool_size=10,
     max_overflow=20 # temp extra connections during traffic spikes

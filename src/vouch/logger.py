@@ -29,13 +29,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from vouch.config import settings
 from vouch.observability.records import install_record_factory, restore_record_factory
 from vouch.observability.sanitize import sanitize, scrub_text
 
 LEVEL_ENV_VAR = "VOUCH_LOG_LEVEL"
 LOG_DIR_ENV_VAR = "VOUCH_LOG_DIR"
+#: Mirrors the settings.log_level default; imported by tests.
 DEFAULT_LEVEL = "INFO"
-DEFAULT_LOG_DIR = Path("logs")
 LOG_FILE_NAME = "vouch.log"
 
 CONSOLE_FORMAT = "[%(name)s]: %(message)s"
@@ -119,11 +120,11 @@ class _JsonFormatter(logging.Formatter):
 def _validate_level(level: str | int | None) -> int:
     """Coerce ``level`` to a logging level integer, falling back to INFO.
 
-    Level comes from the environment, so a typo in ``VOUCH_LOG_LEVEL`` must not
-    take down the process that is trying to report the typo.
+    A live ``VOUCH_LOG_LEVEL`` wins at call time; otherwise the value comes
+    from settings, so a typo must not take down the process reporting it.
     """
     if level is None:
-        level = os.environ.get(LEVEL_ENV_VAR, DEFAULT_LEVEL)
+        level = os.environ.get(LEVEL_ENV_VAR) or settings.log_level
 
     if isinstance(level, int):
         return level
@@ -213,7 +214,7 @@ def configure_logging(
         install_record_factory()
 
         if log_dir is None:
-            log_dir = Path(os.environ.get(LOG_DIR_ENV_VAR, DEFAULT_LOG_DIR))
+            log_dir = Path(os.environ.get(LOG_DIR_ENV_VAR) or settings.log_dir)
         log_dir = Path(log_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
 

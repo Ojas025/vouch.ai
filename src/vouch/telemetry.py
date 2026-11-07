@@ -1,5 +1,3 @@
-import os
-
 import pyroscope
 from pyroscope.otel import PyroscopeSpanProcessor
 from opentelemetry import propagate, trace
@@ -7,10 +5,12 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
+from vouch.config import settings
+
 
 def _span_exporter():
     """Build an OTLP span exporter honouring OTEL_EXPORTER_OTLP_PROTOCOL."""
-    if os.environ.get("OTEL_EXPORTER_OTLP_PROTOCOL") == "http/protobuf":
+    if settings.otlp_protocol == "http/protobuf":
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
     else:
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -19,8 +19,8 @@ def _span_exporter():
 
 def setup_telemetry():
     pyroscope.configure(
-        app_name=os.getenv("OTEL_SERVICE_NAME", "vouch.ai"),
-        server_address=os.getenv("PYROSCOPE_SERVER_ADDRESS", "http://localhost:4040")
+        app_name=settings.otel_service_name,
+        server_address=settings.pyroscope_server_address,
     )
 
     propagate.set_global_textmap(TraceContextTextMapPropagator())

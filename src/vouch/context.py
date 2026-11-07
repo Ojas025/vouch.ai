@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-import os
 
 from redis.asyncio.client import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -28,10 +27,6 @@ from vouch.tools.tools.web import (
 
 logger = get_logger(__file__)
 
-REDIS_URL = os.getenv("REDIS_URL")
-STREAM_KEY = os.getenv("JOB_QUEUE_STREAM_KEY", "vouch:jobs")
-CONSUMER_GROUP = os.getenv("JOB_QUEUE_GROUP_NAME", "vouch-workers")
-
 @dataclass(frozen=True)
 class WorkerContext:
     session_factory: async_sessionmaker[AsyncSession]
@@ -45,7 +40,7 @@ class WorkerContext:
 
 async def init_worker_context() -> WorkerContext:
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
-    stream = EventStream(redis_url=settings.redis_url, stream_name=STREAM_KEY)
+    stream = EventStream(redis_url=settings.redis_url, stream_name=settings.job_queue_stream_key)
 
     session_factory = SessionLocal
     leases = LeaseManager(session_factory)
