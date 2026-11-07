@@ -42,7 +42,7 @@ class Submission(Base):
             "provider_account_id",
             "provider_event_id",
             name="uq_submission"
-        )
+        ),
     )
 
     # Primary Key
@@ -80,10 +80,14 @@ class OutboxEvent(Base):
         default=uuid7,
     )
 
-    channel: Mapped[str] = mapped_column(String(20))
-    # idempotency_key: Mapped[str] = mapped_column(String(128))
-    payload: Mapped[dict] = mapped_column(JSONB)
+    submission_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("submissions.id"),
+        nullable=False,
+    )
 
+    channel: Mapped[str] = mapped_column(String(20))
+    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # W3C context of the request that created this row; null on older rows.
     trace_context: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 

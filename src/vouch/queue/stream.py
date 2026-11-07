@@ -9,7 +9,6 @@ import json
 from redis import ResponseError
 from redis.asyncio import Redis, ConnectionPool
 
-from vouch.ingestion import Event
 from vouch.logger import get_logger
 from vouch.observability.propagation import inject_trace_context
 
@@ -44,7 +43,7 @@ class EventStream:
         self.pool = ConnectionPool.from_url(url=redis_url, max_connections=20, decode_responses=True)
         self.client = Redis(connection_pool=self.pool, decode_responses=True)
 
-    async def produce(self, payload: Event, trace_context: dict | None = None) -> bytes | str:
+    async def produce(self, payload: Any, trace_context: dict | None = None) -> bytes | str:
         """Producer method: appends a task to the event stream.
 
         ``trace_context`` is the W3C carrier of the request that originated the
@@ -126,6 +125,10 @@ class EventStream:
     async def ack(self, group_name: str, message_id: str):
         """Acknowledge and mark the message as processed, removing it from the pending entries list (PEL)"""
         return await self.client.xack(self.stream_name, group_name, message_id)
+
+    async def nack(self, group_name: str, message_id: str):
+        """Negative acknowledgement for marking failed messages, moves it to NACK portion of PEL"""
+        return await self.client.xnack(self.stream_name, group_name, "FAIL", message_id)
 
     async def close(self):
         """Gracefully close all open TCP connections."""

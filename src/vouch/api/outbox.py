@@ -8,7 +8,6 @@ from sqlalchemy import select
 
 from vouch.db.models import OutboxEvent
 from vouch.db.session import SessionLocal
-from vouch.ingestion import Event
 from vouch.logger import configure_logging, get_logger
 from vouch.queue.stream import EventStream
 
@@ -24,19 +23,13 @@ async def publish_outbox(session, stream: EventStream):
         .with_for_update(skip_locked=True)
     )
 
-    # fetch all result ORMs into a list
     events = result.scalars().all()
-
     for row in events:
-        # ORM rows are not JSON serializable: the broker contract is the typed
-        # Event (channel, idempotency_key, payload).
-        event = Event(
-            channel=row.channel,
-            idempotency_key=row.idempotency_key,
-            payload=row.payload,
-        )
+        event = {
+            "submission_id": str(row.submission_id),
+            "channel": row.channel,
+        }
 
-        # The originating context, captured at write time. Legacy rows carry none.
         carrier = getattr(row, "trace_context", None)
         if isinstance(carrier, dict) and carrier:
             await stream.produce(event, trace_context=carrier)
@@ -52,12 +45,11 @@ async def publish_outbox(session, stream: EventStream):
                 "event": "outbox.published",
                 "component": "api.outbox",
                 "job_id": str(row.id),
-                "idempotency_key": row.idempotency_key,
+                "submission_id": str(row.submission_id),
                 "channel": row.channel,
                 "outcome": "ok",
             },
         )
-
     await session.commit()
 
 async def outbox_worker(stream: EventStream):

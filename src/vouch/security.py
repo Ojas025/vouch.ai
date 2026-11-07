@@ -1,4 +1,3 @@
-from cmath import exp
 import hashlib
 import hmac
 
@@ -80,12 +79,10 @@ def verify_telegram_token(body: bytes, token: str, secret_token: str) -> bool:
 
     return hmac.compare_digest(token, secret_token)
 
-# --- Trust & identity models (moved from security/models.py) ---
-
 class EntityRef(BaseModel):
     """A normalized reference to a typed entity extracted from a submission."""
     type: EntityType
-    value: str  # normalized_value from ExtractedEntity
+    normalized_value: str
 
 class TrustLevel(str, Enum):
     SYSTEM = "system" # system metadata

@@ -6,7 +6,6 @@ from sqlalchemy import case, func, type_coerce, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.types import Interval
 from vouch.db.models import Investigations
-from vouch.db.session import SessionLocal
 from vouch.lease import Lease
 from vouch.logger import get_logger
 
@@ -22,12 +21,12 @@ class InvalidLease(Exception):
         self.message = message
         super().__init__(message)
 
-async def complete_investigation(result: Any, lease: Lease) -> ExecutionOutcome:
+async def complete_investigation(result: Any, lease: Lease, session_factory) -> ExecutionOutcome:
     """Persist investigation outcome."""
     now = func.clock_timestamp()
 
     try:
-        async with SessionLocal() as session:
+        async with session_factory() as session:
             async with session.begin():
                 # validate lease
                 stmt = (
@@ -69,7 +68,7 @@ async def complete_investigation(result: Any, lease: Lease) -> ExecutionOutcome:
         logger.exception("Failed to persist invesigation result")
         raise
 
-async def handle_failure(error: str, lease: Lease, retry_delay: float) -> ExecutionOutcome:
+async def handle_failure(error: str, lease: Lease, retry_delay: float, session_factory) -> ExecutionOutcome:
     """Persist investigation failure"""
     now = func.clock_timestamp()
 
@@ -77,7 +76,7 @@ async def handle_failure(error: str, lease: Lease, retry_delay: float) -> Execut
     retry_at = now + type_coerce(timedelta(seconds=retry_delay), type_=Interval())
 
     try:
-        async with SessionLocal() as session:
+        async with session_factory() as session:
             async with session.begin():
                 stmt = (
                     update(Investigations)

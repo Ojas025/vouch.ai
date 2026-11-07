@@ -14,15 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from dotenv import load_dotenv
 
 from vouch import pipeline
+from vouch.context import CONSUMER_GROUP, WorkerContext, init_worker_context
 from vouch.db.models import Investigations, Submission
-from vouch.db.session import SessionLocal
 from vouch.investigation import ExecutionOutcome, InvalidLease, complete_investigation, handle_failure
-from vouch.lease import LEASE_TTL, LeaseKeeper, LeaseManager
+from vouch.lease import LeaseKeeper
 from vouch.logger import configure_logging, get_logger
 from vouch.observability.context import bind_correlation
 from vouch.observability.propagation import extract_trace_context
 from vouch.observability.spans import SPAN_JOB_PROCESS, span
-from vouch.queue.stream import EventStream
 from vouch.utils import uuid7
 
 """
@@ -30,14 +29,9 @@ Idempotency - A worker can process -> crash before XACK
 """
 load_dotenv()
 
-STREAM_KEY = os.getenv("JOB_QUEUE_STREAM_KEY", "vouch:jobs")
-DLQ_STREAM_KEY = os.getenv("JOB_QUEUE_DEAD_LETTER_STREAM_KEY", "vouch:jobs:dead")
-
-CONSUMER_GROUP = os.getenv("JOB_QUEUE_GROUP_NAME", "vouch-workers")
 MAX_WORKERS = int(os.getenv("VOUCH_WORKER_COUNT", "4"))
 
 RECOVERY_INTERVAL = 30
-RENEW_INTERVAL = LEASE_TTL / 3
 
 logger = get_logger(__name__)
 
@@ -115,21 +109,16 @@ class LeaseAcquisitionFailed(Exception):
         super().__init__(message)
 
 class Worker:
-    def __init__(self, stream: EventStream, leases: LeaseManager, worker_id: UUID):
-        # The handler is injected rather than imported: it is the seam where
-        # the pipeline runner plugs in, and it keeps this module importable
-        # without dragging the whole pipeline/router chain along.
-        self.stream = stream
+    def __init__(self, ctx: WorkerContext, worker_id: UUID):
+        self.ctx = ctx
         self.worker_id = worker_id
-
-        self.leases = leases
 
         self.last_recovery = time.monotonic()
 
     async def run(self) -> None:
         while True:
             try:
-                results = await self.stream.consume(CONSUMER_GROUP, str(self.worker_id), 10)
+                results = await self.ctx.stream.consume(CONSUMER_GROUP, str(self.worker_id), 10)
 
                 # XREADGROUP replies with a (stream_name, entries) pair per stream.
                 for _, messages in results:
@@ -138,7 +127,7 @@ class Worker:
                 now = time.monotonic()
 
                 if now - self.last_recovery >= RECOVERY_INTERVAL:
-                    async for messages in self.stream.recover(CONSUMER_GROUP, str(self.worker_id), min_idle_ms=60_000, count=10):
+                    async for messages in self.ctx.stream.recover(CONSUMER_GROUP, str(self.worker_id), min_idle_ms=60_000, count=10):
                         await self.handle_messages(messages)
 
                     self.last_recovery = now
@@ -158,17 +147,19 @@ class Worker:
 
                     case ExecutionOutcome.COMPLETED:
                         # acknowledge completion
-                        ...
+                        logger.info(f"Successfully completed job investigation - {message_id}")
 
                     case ExecutionOutcome.RETRY:
-                        # schedule retry -> acknowledge
-                        ...
+                        # nack -> scheduled for retry -> xautoclaim picks it up
+                        logger.warning(f"Failed job investigation, scheduled for retry - {message_id}")
+                        await self.ctx.stream.nack(CONSUMER_GROUP, message_id)
+                        continue
 
                     case ExecutionOutcome.DEAD:
                         # dead-letter -> acknowledge
-                        ...
+                        logger.warning(f"Exhausted investigation retries, job should drop dead - {message_id}")
 
-                await self.stream.ack(CONSUMER_GROUP, message_id)
+                await self.ctx.stream.ack(CONSUMER_GROUP, message_id)
 
             except ValidationError as e:
                 logger.error(
@@ -182,6 +173,8 @@ class Worker:
                 )
 
                 # dead-letter -> ack
+                await self.ctx.stream.ack(CONSUMER_GROUP, message_id)
+
                 continue
 
             except InvalidLease:
@@ -240,7 +233,7 @@ class Worker:
                 context=parent
             ):
                 with bind_correlation():
-                    investigation, is_duplicate = await get_or_create_investigation(SessionLocal, event["submission_id"])
+                    investigation, is_duplicate = await get_or_create_investigation(self.ctx.session_factory, event["submission_id"])
 
                     # Validate into pydantic model
                     investigation = Investigation(
@@ -262,13 +255,13 @@ class Worker:
                     )
 
                     # Acquire lease
-                    lease = await self.leases.acquire(investigation.investigation_id, self.worker_id)
+                    lease = await self.ctx.leases.acquire(investigation.investigation_id, self.worker_id)
                     if lease is None:
                         raise LeaseAcquisitionFailed(
                             f"Lease could not be acquired for worker - {self.worker_id}"
                         )
 
-                    keeper = LeaseKeeper(self.leases, lease)
+                    keeper = LeaseKeeper(self.ctx.leases, lease)
 
                     keeper.start()
 
@@ -308,10 +301,10 @@ class Worker:
 
                         except Exception as e:
                             logger.exception("Pipeline execution failed")
-                            outcome = await handle_failure(str(e), keeper.lease, 10.0)
+                            outcome = await handle_failure(str(e), keeper.lease, 10.0, self.ctx.session_factory)
 
                         else:
-                            outcome = await complete_investigation(result, keeper.lease)
+                            outcome = await complete_investigation(result, keeper.lease, self.ctx.session_factory)
 
                         return outcome
 
@@ -356,17 +349,15 @@ class Worker:
             raise
 
 class WorkerPool:
-    def __init__(self, stream: EventStream, leases: LeaseManager, total_workers: int):
-        self.stream = stream
+    def __init__(self, ctx: WorkerContext, total_workers: int):
+        self.ctx = ctx
         self.total_workers = total_workers
-        self.leases = leases
 
     async def run(self):
         workers = [
             Worker(
                 worker_id=uuid7(),
-                stream=self.stream,
-                leases=self.leases
+                ctx=self.ctx
             )
             for i in range(self.total_workers)
         ]
@@ -379,24 +370,18 @@ async def main() -> None:
     """Entrypoint for the consumer pool. The group must exist before XREADGROUP."""
     configure_logging()
 
-    stream = EventStream(
-        redis_url=os.environ["REDIS_URL"],
-        stream_name=STREAM_KEY,
-    )
-
-    leases = LeaseManager(SessionLocal())
+    ctx = await init_worker_context()
 
     try:
-        await stream.ensure_group(CONSUMER_GROUP)
+        await ctx.stream.ensure_group(CONSUMER_GROUP)
 
         await WorkerPool(
-            stream=stream,
+            ctx=ctx,
             total_workers=MAX_WORKERS,
-            leases=leases
         ).run()
 
     finally:
-        await stream.close()
+        await ctx.stream.close()
 
 
 if __name__ == "__main__":

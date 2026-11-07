@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from vouch.agents.models import AgentRole, LLMProfile
+from vouch.agents.models import AgentRole, Capability, LLMProfile
+from vouch.tools.models import ToolDefinition, ToolSideEffects
+from vouch.tools.tools.entity import EntityIntelArgs, EntityIntelOutput, entity_intel
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -8,33 +10,67 @@ PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
 SKILLS_DIR = Path(__file__).parent / "skills"
 SKILLS_DIR.mkdir(parents=True, exist_ok=True)
 
+TOOL_DEFINITIONS: list[ToolDefinition] = [
+    ToolDefinition(
+        tool_name="entity_intel",
+        description="Single typed entity lookup...",
+        handler=entity_intel,
+        args_model=EntityIntelArgs,
+        output_model=EntityIntelOutput,
+        side_effects=ToolSideEffects.NETWORK,
+        timeout_sec=30.0,
+    ),
+    # ...other tools
+]
+
 PROFILES: dict[AgentRole, LLMProfile] = {
     AgentRole.ORCHESTRATOR: LLMProfile(
         model="minicpm",
         api_key="not-required",
         base_url="http://127.0.0.1:8080/v1",
-        capabilities=["tools", "streaming", "json_schema"],
+        capabilities=[Capability.TOOLS, Capability.JSON_SCHEMA, Capability.REASONING],
         system_prompt_path=PROMPTS_DIR / "orchestrator.prompt.md",
+    ),
+    AgentRole.APK_AGENT: LLMProfile(
+        model="minicpm",
+        api_key="not-required",
+        base_url="http://127.0.0.1:8080/v1",
+        capabilities=[Capability.TOOLS, Capability.JSON_SCHEMA],
+        system_prompt_path=PROMPTS_DIR / "apk_agent.prompt.md",
+    ),
+    AgentRole.WEB_AGENT: LLMProfile(
+        model="minicpm",
+        api_key="not-required",
+        base_url="http://127.0.0.1:8080/v1",
+        capabilities=[Capability.TOOLS, Capability.JSON_SCHEMA],
+        system_prompt_path=PROMPTS_DIR / "WEB_AGENT.prompt.md",
+    ),
+    AgentRole.ARTIFACT_AGENT: LLMProfile(
+        model="minicpm",
+        api_key="not-required",
+        base_url="http://127.0.0.1:8080/v1",
+        capabilities=[Capability.TOOLS, Capability.JSON_SCHEMA],
+        system_prompt_path=PROMPTS_DIR / "artifact_agent.prompt.md",
     ),
     AgentRole.HYPOTHESIS_AGENT: LLMProfile(
         model="minicpm",
         api_key="not-required",
         base_url="http://127.0.0.1:8080/v1",
-        capabilities=["tools", "streaming", "json_schema", "vision"],
+        capabilities=[Capability.TOOLS, Capability.JSON_SCHEMA, Capability.VISION],
         system_prompt_path=PROMPTS_DIR / "hypotheses_agent.prompt.md"
     ),
     AgentRole.VERIFIER: LLMProfile(
         model="minicpm",
         api_key="not-required",
         base_url="http://127.0.0.1:8080/v1",
-        capabilities=["tools", "streaming", "json_schema"],
+        capabilities=[Capability.TOOLS, Capability.JSON_SCHEMA],
         system_prompt_path=PROMPTS_DIR / "verifier.prompt.md",
     ),
     AgentRole.SYNTHESIS: LLMProfile(
         model="minicpm",
         api_key="not-required",
         base_url="http://127.0.0.1:8080/v1",
-        capabilities=["json_schema", "streaming"],
+        capabilities=[Capability.TOOLS, Capability.JSON_SCHEMA],
         system_prompt_path=PROMPTS_DIR / "synthesis.prompt.md"
     )
 }
@@ -46,7 +82,7 @@ TOOLSETS = {
         "memory_recall",
         "decide"
     },
-    AgentRole.URL_AGENT: {
+    AgentRole.WEB_AGENT: {
         "evidence_query",
         "evidence_trace",
         "entity_intel",
@@ -82,10 +118,3 @@ TOOLSETS = {
     },
     AgentRole.SYNTHESIS: {}
 }
-
-def resolve_tools(agent: AgentRole, registry: dict):
-    allowed_tools = TOOLSETS[agent]
-    return [
-        registry[name]
-        for name in allowed_tools
-    ]

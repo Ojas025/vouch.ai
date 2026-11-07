@@ -34,7 +34,7 @@ class ExtractedEntity(BaseModel):
     type: EntityType
     extracted_value: str
     normalized_value: str = ""
-    source_field: Literal["text", "document", "qr", "image"] | None = None
+    source_field: Literal["text", "document", "qr", "image", "web"] | None = None
 
 class Pattern(BaseModel):
     pattern: str

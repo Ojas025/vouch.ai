@@ -1,6 +1,5 @@
-from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Any, Literal, Optional
+from typing import List, Literal, Optional
 from enum import Enum
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -11,12 +10,6 @@ class Channel(str, Enum):
     WHATSAPP = "whatsapp"
     TELEGRAM = "telegram"
     REST = "rest"
-
-@dataclass
-class Event:
-    channel: str
-    idempotency_key: str
-    payload: dict[str, Any]
 
 class MediaDownloadMetadata(BaseModel):
     url: str = ""
@@ -40,6 +33,7 @@ class AttachmentMetadata(BaseModel):
 class IncomingMessage(BaseModel):
     submission_id: str
     channel: Channel
+    investigation_id: str
     provider: str
     message_id: str
     text: str

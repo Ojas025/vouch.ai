@@ -24,6 +24,15 @@ PATTERNS = [
     Pattern(pattern=EMAIL_PATTERN, type=EntityType.EMAIL),
 ]
 
+def normalize_entity(type: EntityType, match: str):
+    if type == EntityType.IFSC:
+        normalized = match.upper()
+    elif type in (EntityType.UPI_VPA, EntityType.EMAIL):
+        normalized = match.lower()
+    else:
+        normalized = match
+
+    return normalized
 
 def extract_entities(text: str) -> List[ExtractedEntity]:
     """Extract typed entities from text, each normalized to its canonical form.
@@ -56,12 +65,7 @@ def extract_entities(text: str) -> List[ExtractedEntity]:
                 if not match:
                     continue
 
-            if pattern.type == EntityType.IFSC:
-                normalized = match.upper()
-            elif pattern.type in (EntityType.UPI_VPA, EntityType.EMAIL):
-                normalized = match.lower()
-            else:
-                normalized = match
+            normalized = normalize_entity(pattern.type, match)
 
             entities.append(ExtractedEntity(
                 type=pattern.type,

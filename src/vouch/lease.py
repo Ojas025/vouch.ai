@@ -6,10 +6,10 @@ from pydantic.dataclasses import dataclass
 from sqlalchemy import and_, or_, select, update, func
 from vouch.db.models import Investigations
 from vouch.logger import get_logger
-from vouch.worker import RENEW_INTERVAL
 
 logger = get_logger(__file__)
 LEASE_TTL = timedelta(seconds=60)
+RENEW_INTERVAL = LEASE_TTL / 3
 
 class LeaseLost(Exception):
     """Renewal failed - worker is a zombie"""
