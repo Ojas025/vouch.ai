@@ -1,5 +1,3 @@
-from typing import Literal
-
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -15,12 +13,6 @@ class Settings(BaseSettings):
 
     abuse_ch_auth_key: str = ""
 
-    # Fact Services source profile:
-    #   "core"     - URLhaus, urlscan, RDAP
-    #   "extended" - adds ThreatFox and OpenPhish
-    fact_profile: Literal["core", "extended"] = "core"
-
-    # Optional sources. When blank, the source degrades to no facts rather than erroring.
     virustotal_api_key: str = ""
     urlscan_api_key: str = ""   # urlscan free tier works unauthenticated
 

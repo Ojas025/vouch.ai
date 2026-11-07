@@ -1,11 +1,11 @@
 import asyncio
-import base64
+import re
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from random import uniform
-from time import monotonic, sleep
+from time import monotonic
 from typing import Awaitable, Callable
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 import httpx
 from pydantic import BaseModel, Field
@@ -24,7 +24,11 @@ _ESTABLISHED_DAYS = 730
 _MAX_ATTEMPTS = 3
 _BASE_DELAY = 1.0
 _MAX_DELAY = 8.0
+_MAX_BODY = 2 * 1024 * 1024
+_MAX_VALUE_LEN = 2048
+_MAX_RESULTS = 10
 _RETRY_STATUSES = frozenset({408, 425, 429, 500, 502, 503, 504})
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _LIMITS: dict[str, tuple[int, float]] = {
     "abuse.ch": (2, 0.5),
     "rdap.org": (4, 0.25),
@@ -33,7 +37,7 @@ _LIMITS: dict[str, tuple[int, float]] = {
     "urlscan.io": (2, 1.0),
     "virustotal.com": (2, 1.0),
 }
-_SEMS: dict[str, asyncio.Semaphore] = {}
+_SEMS: dict[str, tuple[asyncio.AbstractEventLoop, asyncio.Semaphore]] = {}
 _NEXT_OK: dict[str, float] = {}
 
 
@@ -84,21 +88,34 @@ class FactResult(BaseModel):
 class EntityIntelArgs(BaseModel):
     entity: EntityRef
     source: SourceName | None = None
-    investigation_id: str
+    investigation_id: str = Field(max_length=64)
 
 
 class EntityIntelOutput(BaseModel):
     facts: list[FactResult] = Field(default_factory=list)
 
-_ABUSE_CH_HEADERS = {"Auth-Key": settings.abuse_ch_auth_key}
+
+_VALID: dict[EntityType, re.Pattern] = {
+    EntityType.URL: re.compile(r"^(?:https?://)?[^\s<>'\"\\]+$"),
+    EntityType.FILE_SHA256: re.compile(r"^[a-fA-F0-9]{64}$"),
+    EntityType.IFSC: re.compile(r"^[A-Za-z]{4}0[A-Za-z0-9]{6}$"),
+}
+
 _client: httpx.AsyncClient | None = None
 
 
 def client() -> httpx.AsyncClient:
     global _client
     if _client is None:
-        _client = httpx.AsyncClient(timeout=10.0, follow_redirects=True)
+        _client = httpx.AsyncClient(timeout=10.0, follow_redirects=False, trust_env=False)
     return _client
+
+
+async def aclose() -> None:
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
 
 
 def host_of(value: str) -> str:
@@ -111,11 +128,19 @@ def host_of(value: str) -> str:
     return host
 
 
+def _clean(value: object, limit: int = 200) -> str:
+    if value is None:
+        return ""
+    return " ".join(str(value).split())[:limit]
+
+
 def _gate(name: str) -> asyncio.Semaphore:
-    sem = _SEMS.get(name)
-    if sem is None:
-        sem = _SEMS[name] = asyncio.Semaphore(_LIMITS.get(name, (4, 0.0))[0])
-    return sem
+    loop = asyncio.get_running_loop()
+    entry = _SEMS.get(name)
+    if entry is None or entry[0] is not loop:
+        entry = (loop, asyncio.Semaphore(_LIMITS.get(name, (4, 0.0))[0]))
+        _SEMS[name] = entry
+    return entry[1]
 
 
 async def _throttle(name: str) -> None:
@@ -138,15 +163,28 @@ async def call(name: str, method: str, url: str, **kw) -> httpx.Response:
         await _throttle(name)
         try:
             async with sem:
-                resp = await client().request(method, url, **kw)
-        except (httpx.TimeoutException, httpx.ConnectError) as e:
+                async with client().stream(method, url, **kw) as resp:
+                    if resp.status_code in _RETRY_STATUSES:
+                        last_exc = httpx.HTTPStatusError(
+                            f"HTTP {resp.status_code}", request=resp.request, response=resp
+                        )
+                    else:
+                        body = bytearray()
+                        async for chunk in resp.aiter_bytes():
+                            body += chunk
+                            if len(body) > _MAX_BODY:
+                                raise httpx.ReadError("response body exceeds limit")
+                        headers = httpx.Headers(resp.headers)
+                        headers.pop("content-encoding", None)
+                        headers.pop("content-length", None)
+                        return httpx.Response(
+                            resp.status_code,
+                            content=bytes(body),
+                            headers=headers,
+                            request=resp.request,
+                        )
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as e:
             last_exc = e
-        else:
-            if resp.status_code not in _RETRY_STATUSES:
-                return resp
-            last_exc = httpx.HTTPStatusError(
-                f"HTTP {resp.status_code}", request=resp.request, response=resp
-            )
 
         if attempt < _MAX_ATTEMPTS - 1:
             logger.warning(
@@ -159,9 +197,19 @@ async def call(name: str, method: str, url: str, **kw) -> httpx.Response:
                     "error_category": type(last_exc).__name__,
                 },
             )
-            await sleep(uniform(0, min(_MAX_DELAY, _BASE_DELAY * 2 ** attempt)))
+            await asyncio.sleep(uniform(0, min(_MAX_DELAY, _BASE_DELAY * 2 ** attempt)))
+
+    if last_exc is None:
+        raise RuntimeError("fact source call failed without a response")
 
     raise last_exc
+
+
+async def _redirect(name: str, base: str, resp: httpx.Response, **kw) -> httpx.Response:
+    location = resp.headers.get("location", "")
+    if not location:
+        return resp
+    return await call(name, "GET", urljoin(base, location), **kw)
 
 
 def _now() -> datetime:
@@ -195,6 +243,12 @@ def _fact(
     )
 
 
+def _abuse_headers() -> dict[str, str]:
+    if not settings.abuse_ch_auth_key:
+        return {}
+    return {"Auth-Key": settings.abuse_ch_auth_key}
+
+
 async def lookup_urlhaus(entity: EntityRef) -> list[FactResult]:
     now = _now()
     host = host_of(entity.normalized_value)
@@ -206,17 +260,19 @@ async def lookup_urlhaus(entity: EntityRef) -> list[FactResult]:
             "POST",
             "https://urlhaus-api.abuse.ch/v1/host/",
             data={"host": host},
-            headers=_ABUSE_CH_HEADERS,
+            headers=_abuse_headers(),
         )
-    except Exception:
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
         return []
-    if resp.status_code != 200:
-        return []
-    data = resp.json()
     if data.get("query_status") != "ok":
         return []
     urls = data.get("urls") or []
     first = urls[0] if urls else {}
+    raw_tags = first.get("tags")
+    tags = [t for t in raw_tags if isinstance(t, str)] if isinstance(raw_tags, list) else []
     return [
         _fact(
             FactSource.URLHAUS,
@@ -224,10 +280,10 @@ async def lookup_urlhaus(entity: EntityRef) -> list[FactResult]:
             entity,
             now,
             {
-                "urlhaus_reference": data.get("urlhaus_reference", ""),
+                "urlhaus_reference": _clean(data.get("urlhaus_reference")),
                 "url_count": data.get("url_count", 0),
-                "threat": first.get("threat", ""),
-                "tags": ", ".join(first.get("tags") or []),
+                "threat": _clean(first.get("threat")),
+                "tags": ", ".join(_clean(t, 40) for t in tags),
             },
             confidence=1.0,
             ttl=timedelta(hours=1),
@@ -251,11 +307,11 @@ async def lookup_urlscan(entity: EntityRef) -> list[FactResult]:
             params={"q": f"domain:{domain}", "size": 3},
             headers=headers,
         )
-    except Exception:
+        if resp.status_code != 200:
+            return []
+        results = resp.json().get("results") or []
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
         return []
-    if resp.status_code != 200:
-        return []
-    results = resp.json().get("results") or []
     if not results:
         return [
             _fact(
@@ -281,17 +337,17 @@ async def lookup_urlscan(entity: EntityRef) -> list[FactResult]:
                 now,
                 {
                     "domain": domain,
-                    "title": str(page.get("title") or "")[:200],
+                    "title": _clean(page.get("title")),
                     "malicious": bool(malicious),
                     "score": overall.get("score"),
-                    "country": page.get("country", ""),
-                    "asn": page.get("asn", ""),
-                    "asnname": page.get("asnname", ""),
-                    "apex_domain": page.get("apexDomain", ""),
+                    "country": _clean(page.get("country"), 64),
+                    "asn": _clean(page.get("asn"), 64),
+                    "asnname": _clean(page.get("asnname")),
+                    "apex_domain": _clean(page.get("apexDomain")),
                     "apex_domain_age_days": page.get("apexDomainAgeDays"),
                     "tls_age_days": page.get("tlsAgeDays"),
-                    "tls_issuer": page.get("tlsIssuer", ""),
-                    "last_scan": (r.get("task") or {}).get("time", ""),
+                    "tls_issuer": _clean(page.get("tlsIssuer")),
+                    "last_scan": _clean((r.get("task") or {}).get("time"), 64),
                 },
                 confidence=0.7 if malicious else None,
                 ttl=timedelta(hours=24),
@@ -303,9 +359,8 @@ async def lookup_urlscan(entity: EntityRef) -> list[FactResult]:
 def _registrar(data: dict) -> str:
     for ent in data.get("entities") or []:
         vcard = ent.get("vcardArray") or []
-        if len(vcard) < 2:
-            continue
-        for item in vcard[1]:
+        props = vcard[1] if len(vcard) >= 2 and isinstance(vcard[1], list) else []
+        for item in props:
             if isinstance(item, list) and len(item) >= 4 and item[0] == "fn" and isinstance(item[3], str) and item[3]:
                 return item[3]
     return ""
@@ -324,13 +379,16 @@ async def lookup_rdap(entity: EntityRef) -> list[FactResult]:
     domain = host_of(entity.normalized_value)
     if not domain:
         return []
+    url = f"https://rdap.org/domain/{quote(domain)}"
     try:
-        resp = await call("rdap.org", "GET", f"https://rdap.org/domain/{quote(domain)}", timeout=15.0)
-    except Exception:
+        resp = await call("rdap.org", "GET", url, timeout=15.0)
+        if resp.status_code in _REDIRECT_STATUSES:
+            resp = await _redirect("rdap.org", url, resp, timeout=15.0)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
         return []
-    if resp.status_code != 200:
-        return []
-    data = resp.json()
     events = {e.get("eventAction"): e.get("eventDate") for e in (data.get("events") or [])}
     registered_at = _rdap_dt(events.get("registration") or "")
     if registered_at is None:
@@ -352,7 +410,7 @@ async def lookup_rdap(entity: EntityRef) -> list[FactResult]:
                 "domain": domain,
                 "registered_at": registered_at.isoformat(),
                 "age_days": age_days,
-                "registrar": _registrar(data),
+                "registrar": _clean(_registrar(data)),
             },
             confidence=confidence,
             ttl=timedelta(hours=24),
@@ -375,13 +433,13 @@ async def lookup_threatfox(entity: EntityRef) -> list[FactResult]:
             "POST",
             "https://threatfox-api.abuse.ch/api/v1/",
             json={"query": "search_ioc", "search_term": entity.normalized_value},
-            headers=_ABUSE_CH_HEADERS,
+            headers=_abuse_headers(),
         )
-    except Exception:
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
         return []
-    if resp.status_code != 200:
-        return []
-    data = resp.json()
     if data.get("query_status") != "ok":
         return []
     rows = data.get("data")
@@ -394,14 +452,14 @@ async def lookup_threatfox(entity: EntityRef) -> list[FactResult]:
             entity,
             now,
             {
-                "ioc_id": str(row.get("id", "")),
-                "malware": row.get("malware_printable", ""),
-                "ioc_type": row.get("ioc_type", ""),
+                "ioc_id": _clean(row.get("id"), 64),
+                "malware": _clean(row.get("malware_printable")),
+                "ioc_type": _clean(row.get("ioc_type"), 64),
             },
-            confidence=float(row.get("confidence_level", 50)) / 100.0,
+            confidence=min(1.0, float(row.get("confidence_level") or 50) / 100.0),
             ttl=timedelta(hours=1),
         )
-        for row in rows
+        for row in rows[:_MAX_RESULTS]
     ]
 
 
@@ -417,13 +475,19 @@ async def _refresh_openphish() -> None:
         now = _now()
         if _openphish_refreshed and (now - _openphish_refreshed) < _OPENPHISH_TTL:
             return
+        url = "https://openphish.com/feed.txt"
         try:
-            resp = await call("openphish.com", "GET", "https://openphish.com/feed.txt", timeout=30.0)
+            resp = await call("openphish.com", "GET", url, timeout=30.0)
+            if resp.status_code in _REDIRECT_STATUSES:
+                resp = await _redirect("openphish.com", url, resp, timeout=30.0)
             if resp.status_code == 200:
                 _openphish_feed = frozenset(line.strip() for line in resp.text.splitlines() if line.strip())
-                _openphish_refreshed = now
-        except Exception:
-            pass
+        except (httpx.HTTPError, ValueError) as e:
+            logger.warning(
+                "openphish feed refresh failed",
+                extra={"event": "entity_intel.openphish_refresh", "error_category": type(e).__name__},
+            )
+        _openphish_refreshed = now
 
 
 async def lookup_openphish(entity: EntityRef) -> list[FactResult]:
@@ -448,24 +512,24 @@ async def lookup_ifsc(entity: EntityRef) -> list[FactResult]:
     now = _now()
     code = entity.normalized_value.upper()
     try:
-        resp = await call("razorpay.com", "GET", f"https://ifsc.razorpay.com/{code}")
-    except Exception:
+        resp = await call("razorpay.com", "GET", f"https://ifsc.razorpay.com/{quote(code)}")
+        if resp.status_code == 404:
+            return [
+                _fact(
+                    FactSource.IFSC,
+                    ThreatClassification.IFSC_INVALID,
+                    entity,
+                    now,
+                    {"ifsc": code},
+                    confidence=1.0,
+                    ttl=timedelta(days=7),
+                )
+            ]
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
         return []
-    if resp.status_code == 404:
-        return [
-            _fact(
-                FactSource.IFSC,
-                ThreatClassification.IFSC_INVALID,
-                entity,
-                now,
-                {"ifsc": code},
-                confidence=1.0,
-                ttl=timedelta(days=7),
-            )
-        ]
-    if resp.status_code != 200:
-        return []
-    data = resp.json()
     return [
         _fact(
             FactSource.IFSC,
@@ -474,10 +538,10 @@ async def lookup_ifsc(entity: EntityRef) -> list[FactResult]:
             now,
             {
                 "ifsc": code,
-                "bank": data.get("BANK", ""),
-                "branch": data.get("BRANCH", ""),
-                "state": data.get("STATE", ""),
-                "city": data.get("CITY", ""),
+                "bank": _clean(data.get("BANK")),
+                "branch": _clean(data.get("BRANCH")),
+                "state": _clean(data.get("STATE")),
+                "city": _clean(data.get("CITY")),
             },
             confidence=1.0,
             ttl=timedelta(days=7),
@@ -488,30 +552,22 @@ async def lookup_ifsc(entity: EntityRef) -> list[FactResult]:
 _VT_BASE = "https://www.virustotal.com/api/v3"
 
 
-def _vt_url_id(url: str) -> str:
-    return base64.urlsafe_b64encode(url.encode()).decode().strip("=")
-
-
 async def lookup_virustotal(entity: EntityRef) -> list[FactResult]:
     if not settings.virustotal_api_key:
         return []
     now = _now()
-    if entity.type == EntityType.FILE_SHA256:
-        path, kind = f"/files/{entity.normalized_value}", "file"
-    else:
-        path, kind = f"/urls/{_vt_url_id(entity.normalized_value)}", "url"
     try:
         resp = await call(
             "virustotal.com",
             "GET",
-            f"{_VT_BASE}{path}",
+            f"{_VT_BASE}/files/{quote(entity.normalized_value)}",
             headers={"x-apikey": settings.virustotal_api_key},
         )
-    except Exception:
+        if resp.status_code != 200:
+            return []
+        attrs = (resp.json().get("data") or {}).get("attributes") or {}
+    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
         return []
-    if resp.status_code != 200:
-        return []
-    attrs = (resp.json().get("data") or {}).get("attributes") or {}
     stats = attrs.get("last_analysis_stats") or {}
     malicious = int(stats.get("malicious", 0) or 0)
     suspicious = int(stats.get("suspicious", 0) or 0)
@@ -526,14 +582,14 @@ async def lookup_virustotal(entity: EntityRef) -> list[FactResult]:
             entity,
             now,
             {
-                "kind": kind,
+                "kind": "file",
                 "malicious": malicious,
                 "suspicious": suspicious,
                 "harmless": stats.get("harmless", 0),
                 "undetected": stats.get("undetected", 0),
                 "engines": engines,
                 "reputation": attrs.get("reputation"),
-                "meaningful_name": str(attrs.get("meaningful_name") or "")[:200],
+                "meaningful_name": _clean(attrs.get("meaningful_name")),
             },
             confidence=round(min(1.0, ratio), 3),
             ttl=timedelta(hours=6),
@@ -552,7 +608,13 @@ SOURCES: dict[SourceName, Callable[[EntityRef], Awaitable[list[FactResult]]]] = 
 }
 
 SOURCES_BY_TYPE: dict[EntityType, list[SourceName]] = {
-    EntityType.URL: [SourceName.URLHAUS, SourceName.URLSCAN, SourceName.RDAP],
+    EntityType.URL: [
+        SourceName.URLHAUS,
+        SourceName.URLSCAN,
+        SourceName.RDAP,
+        SourceName.THREATFOX,
+        SourceName.OPENPHISH,
+    ],
     EntityType.FILE_SHA256: [SourceName.VIRUSTOTAL, SourceName.THREATFOX],
     EntityType.IFSC: [SourceName.IFSC],
 }
@@ -560,6 +622,16 @@ SOURCES_BY_TYPE: dict[EntityType, list[SourceName]] = {
 
 async def entity_intel(args: EntityIntelArgs) -> EntityIntelOutput:
     valid = SOURCES_BY_TYPE.get(args.entity.type, [])
+    pattern = _VALID.get(args.entity.type)
+    value = args.entity.normalized_value
+
+    if pattern is not None and (len(value) > _MAX_VALUE_LEN or not pattern.fullmatch(value)):
+        logger.warning(
+            "rejected invalid entity value",
+            extra={"event": "entity_intel.invalid_value", "entity_type": args.entity.type.value},
+        )
+        return EntityIntelOutput()
+
     if args.source is not None:
         if args.source not in valid:
             logger.warning(

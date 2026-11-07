@@ -32,7 +32,7 @@ class WebhookIngestionService:
                         provider_event_id=provider_event_id,
                         payload=payload,
                         sha256_digest=payload_digest,
-                        state="received",
+                        status="received",
                     ).on_conflict_do_nothing(
                         index_elements=[
                             Submission.channel,
@@ -73,7 +73,7 @@ class WebhookIngestionService:
                     if existing is None:
                         raise RuntimeError("Conflicting submission was not found")
 
-                    submission_id = existing.index_element
+                    submission_id = existing.id
                     is_duplicate = True
                     payload_matches = existing.sha256_digest == payload_digest
 
@@ -117,5 +117,5 @@ class WebhookIngestionService:
 
         return IngestionResult(
             submission_id=str(submission_id),
-            is_duplicate=submission_id is None
+            is_duplicate=is_duplicate
         )

@@ -10,20 +10,8 @@ from vouch.ledger.ledger import EvidenceLedger
 from vouch.logger import get_logger
 from vouch.queue.stream import EventStream
 from vouch.tools.gateway import ToolGateway
-from vouch.tools.models import ToolDefinition, ToolSideEffects
 from vouch.tools.rate_limit import RateLimiter
 from vouch.tools.registry import ToolRegistry
-from vouch.tools.tools.web import (
-    ExtractPageContentArgs,
-    ExtractPageContentOutput,
-    ScreenshotPageArgs,
-    ScreenshotPageOutput,
-    WebInspectArgs,
-    WebInspectOutput,
-    extract_page_content,
-    screenshot_page,
-    web_inspect,
-)
 
 logger = get_logger(__file__)
 
@@ -52,35 +40,6 @@ async def init_worker_context() -> WorkerContext:
     tool_registry.register(
         TOOL_DEFINITIONS
     )
-    tool_registry.register([
-        ToolDefinition(
-            tool_name="web_inspect",
-            description="Inspect a URL and follow HTTP redirects to record the hop chain and landing status.",
-            handler=web_inspect,
-            args_model=WebInspectArgs,
-            output_model=WebInspectOutput,
-            side_effects=ToolSideEffects.NETWORK,
-            timeout_sec=15.0,
-        ),
-        ToolDefinition(
-            tool_name="extract_page_content",
-            description="Execute JavaScript and extract rendered Markdown text, titles, and hyperlinks from a webpage via Obscura.",
-            handler=extract_page_content,
-            args_model=ExtractPageContentArgs,
-            output_model=ExtractPageContentOutput,
-            side_effects=ToolSideEffects.NETWORK,
-            timeout_sec=25.0,
-        ),
-        ToolDefinition(
-            tool_name="screenshot_page",
-            description="Render a webpage in a headless browser and capture a 1280x720 PNG screenshot artifact.",
-            handler=screenshot_page,
-            args_model=ScreenshotPageArgs,
-            output_model=ScreenshotPageOutput,
-            side_effects=ToolSideEffects.NETWORK,
-            timeout_sec=25.0,
-        ),
-    ])
 
     logger.info("worker context initialized", extra={"event": "worker.context_ready"})
 

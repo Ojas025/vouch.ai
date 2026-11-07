@@ -22,6 +22,7 @@ from vouch.logger import configure_logging, get_logger
 from vouch.observability.context import bind_correlation
 from vouch.observability.propagation import extract_trace_context
 from vouch.observability.spans import SPAN_JOB_PROCESS, span
+from vouch.tools.tools.entity import aclose as close_entity_client
 from vouch.utils import uuid7
 
 """
@@ -377,6 +378,7 @@ async def main() -> None:
         ).run()
 
     finally:
+        await close_entity_client()
         await ctx.stream.close()
 
 

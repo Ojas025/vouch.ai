@@ -21,12 +21,9 @@ provider_event_id:
 - Whatsapp -> messages[0].id
 """
 
-# Settings-derived aliases. Fail closed at import, as the previous
-# os.environ[...] reads did: an empty secret would let a caller forge an
-# HMAC against the empty key. The names are read by
-# tests/v1/integration/test_webhook_outbox_e2e.py at import time.
 if not settings.whatsapp_secret or not settings.telegram_webhook_secret:
     raise RuntimeError("WHATSAPP_SECRET and TELEGRAM_WEBHOOK_SECRET must be set")
+
 WHATSAPP_SECRET = settings.whatsapp_secret
 TELEGRAM_WEBHOOK_SECRET = settings.telegram_webhook_secret
 
@@ -64,14 +61,19 @@ async def whatsapp_webhook(request: Request):
     if not verify_whatsapp_signature(body, signature, settings.whatsapp_secret):
         raise HTTPException(status_code=401) # Unauthorized
 
-    payload_digest = str(hashlib.sha256(body))
-    payload = json.loads(body)
+    payload_digest = hashlib.sha256(body).hexdigest()
+    try:
+        payload = json.loads(body)
+        provider_event_id = str(payload["entry"][0]["changes"][0]["messages"][0]["id"])
+
+    except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+        raise HTTPException(status_code=400)
 
     # persist to postgresql
     _ = await ingestion_service.ingest(
         "whatsapp",
         "0",
-        str(payload["message_id"]),
+        provider_event_id,
         payload,
         payload_digest,
     )
@@ -89,14 +91,19 @@ async def telegram_webhook(request: Request):
     if not verify_telegram_token(body, token, settings.telegram_webhook_secret):
         raise HTTPException(status_code=401)
 
-    payload_digest = str(hashlib.sha256(body))
-    payload = json.loads(body)
+    payload_digest = hashlib.sha256(body).hexdigest()
+    try:
+        payload = json.loads(body)
+        provider_event_id = str(payload["update_id"])
+
+    except (json.JSONDecodeError, KeyError, TypeError):
+        raise HTTPException(status_code=400)
 
     # Transactional Outbox
     _ = await ingestion_service.ingest(
-        "whatsapp",
+        "telegram",
         "0",
-        str(payload["message_id"]),
+        provider_event_id,
         payload,
         payload_digest,
     )
