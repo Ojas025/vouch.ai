@@ -277,7 +277,7 @@ class ExtractPageContentOutput(BaseModel):
 
 # Bounded to prevent ReDoS on catastrophic attacker-controlled input
 MARKDOWN_LINK_PATTERN = re.compile(
-    r'\[([^\]\n]{1,200})\]\((https?://[^\s\)\n]{1,2048}|/[^\s\)\n]{1,2048})\)'
+    r'\[([^\]\n]{1,200})\]\(([^\s\)\n]{1,2048})\)'
 )
 RAW_URL_REGEX = re.compile(r'https?://[^\s<>"\'\)]{1,2048}')
 
