@@ -4,6 +4,7 @@ from functools import wraps
 from pathlib import Path
 from random import uniform
 import uuid
+import platform
 
 def retry(max_attempts=3, base_delay=1, max_delay=10):
     if max_attempts < 1:
@@ -31,3 +32,24 @@ def uuid7() -> uuid.UUID:
 
 def delete_from_path(path: Path):
     path.unlink(missing_ok=True)
+
+def get_platform() -> tuple[str, str]:
+    os = platform.system().lower()
+    machine = platform.machine().lower()
+
+    arch_map = {
+        "amd64": "x86_64",
+        "x86_64": "x86_64",
+        "x64": "x86_64",
+        "arm64": "aarch64",
+        "aarch64": "aarch64",
+    }
+
+    arch = arch_map[machine]
+
+    if not os or not arch:
+        raise RuntimeError(f"Unsupported platform: {os}/{machine}")
+
+    key = (os, arch)
+
+    return key

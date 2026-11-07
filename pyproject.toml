@@ -19,7 +19,6 @@ dependencies = [
     "langchain-litellm>=0.11.1",
     "langchain-ollama>=1.1.0",
     "langgraph>=1.2.15",
-    "logging>=0.4.9.6",
     "opentelemetry-distro>=0.66b1",
     "opentelemetry-exporter-otlp>=1.45.1",
     "opentelemetry-instrumentation-asyncio==0.66b1",

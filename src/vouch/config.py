@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -34,11 +36,16 @@ class Settings(BaseSettings):
     otel_service_name: str = "vouch.ai"
     pyroscope_server_address: str = "http://localhost:4040"
 
+    obscura_path: Path | None = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",
         populate_by_name=True,
     )
+
+    def set(self, key: str, value) -> None:
+        setattr(self, key, value)
 
 
 settings = Settings()

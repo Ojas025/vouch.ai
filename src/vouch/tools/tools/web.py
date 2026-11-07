@@ -16,6 +16,7 @@ from urllib.parse import urldefrag, urljoin, urlparse
 import httpx
 from pydantic import BaseModel
 
+from vouch.config import settings
 from vouch.logger import get_logger
 from vouch.security import Provenance, TrustLevel
 from vouch.utils import uuid7
@@ -192,6 +193,8 @@ PAGE_LOADED_PATTERN = re.compile(r'^Page loaded:\s*(https?://[^\s]+)\s*-\s*"(.*)
 MAX_STDOUT_BYTES = 512 * 1024
 MAX_STDERR_BYTES = 64 * 1024
 
+OBSCURA_PATH = settings.obscura_path
+
 async def _run_obscura_safe(
     cmd_args: list[str],
     target_url: str,
@@ -205,7 +208,7 @@ async def _run_obscura_safe(
         "HOME": "/tmp",
     }
 
-    full_args = ["obscura", "fetch"] + cmd_args + ["--", target_url]
+    full_args = [str(OBSCURA_PATH), "fetch"] + cmd_args + ["--", target_url]
 
     async with OBSCURA_SEMAPHORE:
         proc = await asyncio.create_subprocess_exec(
@@ -517,3 +520,14 @@ async def screenshot_page(args: ScreenshotPageArgs) -> ScreenshotPageOutput:
         except Exception as e:
             logger.exception("screenshot_page error")
             return ScreenshotPageOutput(url=args.url, error=type(e).__name__)
+
+# =================================== WEB SEARCH ==============================================
+
+class WebSearchArgs(BaseModel):
+    query: str
+
+class WebSearchOutput(BaseModel):
+    ...
+
+async def web_search(args: WebSearchArgs) -> WebSearchOutput:
+    ...

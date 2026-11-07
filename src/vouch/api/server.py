@@ -3,8 +3,10 @@ from contextlib import asynccontextmanager
 import json
 import hashlib
 from dotenv import load_dotenv
+import asyncio
 
 from vouch.api.ingestion import WebhookIngestionService
+from vouch.bootstrap.obscura import ensure_obscura
 from vouch.config import settings
 from vouch.db.session import SessionLocal
 from vouch.logger import configure_logging, get_logger, shutdown_logging
@@ -32,8 +34,12 @@ ingestion_service = WebhookIngestionService(SessionLocal)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    configure_logging()
     logger.info("FastAPI starting - Redis pool ready.")
+
+    obscura_path = await asyncio.to_thread(ensure_obscura)
+    settings.set("obscura_path", obscura_path)
+
+    configure_logging()
 
     yield
 
