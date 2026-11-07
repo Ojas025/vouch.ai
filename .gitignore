@@ -13,6 +13,7 @@ graphify-out/
 .ruff_cache/
 .pytest_cache/
 .superpowers/
+tests/v1
 
 # Runtime log directory (vouch.logger default VOUCH_LOG_DIR)
 logs/
