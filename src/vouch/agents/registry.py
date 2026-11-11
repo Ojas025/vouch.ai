@@ -1,10 +1,10 @@
 from pathlib import Path
 
-from vouch.agents.models import AgentRole, Capability, LLMProfile
+from vouch.agents.llm import LLMProfile
+from vouch.agents.models import AgentRole, Capability
 from vouch.tools.models import ToolDefinition, ToolSideEffects
 from vouch.tools.tools.entity import EntityIntelArgs, EntityIntelOutput, entity_intel
-from vouch.tools.tools.web import ExtractPageContentArgs, ExtractPageContentOutput, ScreenshotPageArgs, ScreenshotPageOutput, WebInspectArgs, WebInspectOutput, extract_page_content, screenshot_page, web_inspect
-from vouch.tools.tools.artifact import artifact_extract, ArtifactExtractArgs, ArtifactExtractOutput
+from vouch.tools.tools.web import ExtractPageContentArgs, ExtractPageContentOutput, ScreenshotPageArgs, ScreenshotPageOutput, WebInspectArgs, WebInspectOutput, WebSearchArgs, extract_page_content, screenshot_page, web_inspect, web_search
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -49,6 +49,15 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         side_effects=ToolSideEffects.NETWORK,
         timeout_sec=25.0,
     ),
+    ToolDefinition(
+        tool_name="web_search",
+        description="Search on the web to query about a claim.",
+        handler=web_search,
+        args_model=WebSearchArgs,
+        output_model=WebInspectOutput,
+        side_effects=ToolSideEffects.NETWORK,
+        timeout_sec=25.0
+    )
 ]
 
 PROFILES: dict[AgentRole, LLMProfile] = {
@@ -57,49 +66,42 @@ PROFILES: dict[AgentRole, LLMProfile] = {
         api_key="not-required",
         base_url="http://127.0.0.1:8080/v1",
         capabilities=[Capability.TOOLS, Capability.JSON_SCHEMA, Capability.REASONING],
-        system_prompt_path=PROMPTS_DIR / "orchestrator.prompt.md",
     ),
     AgentRole.APK_AGENT: LLMProfile(
         model="minicpm",
         api_key="not-required",
         base_url="http://127.0.0.1:8080/v1",
         capabilities=[Capability.TOOLS, Capability.JSON_SCHEMA],
-        system_prompt_path=PROMPTS_DIR / "apk_agent.prompt.md",
     ),
     AgentRole.WEB_AGENT: LLMProfile(
         model="minicpm",
         api_key="not-required",
         base_url="http://127.0.0.1:8080/v1",
         capabilities=[Capability.TOOLS, Capability.JSON_SCHEMA],
-        system_prompt_path=PROMPTS_DIR / "WEB_AGENT.prompt.md",
     ),
     AgentRole.ARTIFACT_AGENT: LLMProfile(
         model="minicpm",
         api_key="not-required",
         base_url="http://127.0.0.1:8080/v1",
         capabilities=[Capability.TOOLS, Capability.JSON_SCHEMA],
-        system_prompt_path=PROMPTS_DIR / "artifact_agent.prompt.md",
     ),
     AgentRole.HYPOTHESIS_AGENT: LLMProfile(
         model="minicpm",
         api_key="not-required",
         base_url="http://127.0.0.1:8080/v1",
         capabilities=[Capability.TOOLS, Capability.JSON_SCHEMA, Capability.VISION],
-        system_prompt_path=PROMPTS_DIR / "hypotheses_agent.prompt.md"
     ),
     AgentRole.VERIFIER: LLMProfile(
         model="minicpm",
         api_key="not-required",
         base_url="http://127.0.0.1:8080/v1",
         capabilities=[Capability.TOOLS, Capability.JSON_SCHEMA],
-        system_prompt_path=PROMPTS_DIR / "verifier.prompt.md",
     ),
     AgentRole.SYNTHESIS: LLMProfile(
         model="minicpm",
         api_key="not-required",
         base_url="http://127.0.0.1:8080/v1",
         capabilities=[Capability.TOOLS, Capability.JSON_SCHEMA],
-        system_prompt_path=PROMPTS_DIR / "synthesis.prompt.md"
     )
 }
 

@@ -1,25 +1,16 @@
 from datetime import datetime
 from enum import Enum
 import operator
-from pathlib import Path
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Literal, TypedDict
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from vouch.decision import DecisionRecord, Verdict
-from vouch.ledger.models import EvidenceDraft
+from vouch.ledger.models import EvidenceDraft, SourceRef
 from vouch.preprocessing.models import EntityType
 from vouch.security import EntityRef, Provenance, TrustLevel
 from vouch.tools.models import ToolCallRequest
-
-class ThreatClass(str, Enum):
-    PHISHING = "phishing"
-    IMPERSONATION = "impersonation"
-    CREDENTIAL_THEFT = "credential_theft"
-    PAYMENT_FRAUD = "payment_fraud"
-    MALWARE = "malware"
-    SOCIAL_MANIPULATION = "social_manipulation"
 
 class ClaimType(str, Enum):
     FACTUAL = "factual"
@@ -82,23 +73,6 @@ class AgentMessage(BaseModel):
     evidence_refs: list[str] = Field(default_factory=list)
     created_at: datetime
 
-class LLMProfile(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    model: str
-    alias: str = ""
-    base_url: str = ""
-    api_key: str | None = None
-    system_prompt_path: Path
-
-    capabilities: list[Capability] = Field(default_factory=list)
-    timeout_sec: float = Field(default=60, gt=0)
-    max_retries: int = Field(default=3, ge=0, le=5)
-    model_kwargs: dict[str, Any] = Field(default_factory=dict)
-
-    temperature: float = 1.0
-    max_tokens: int = 1000
-
 class TaskLimits(BaseModel):
     max_iterations: int = 5
     max_model_calls: int = 10
@@ -121,12 +95,6 @@ class Task(BaseModel):
     objective: str
     status: Status = Status.PENDING
     limits: TaskLimits | None = None
-
-class SourceRef(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    source_type: Literal["evidence", "tool_result", "artifact"]
-    source_id: str = Field(min_length=1, max_length=128)
 
 class EntityCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid")

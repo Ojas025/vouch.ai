@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from datetime import datetime
 from uuid import UUID
+from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ValidationError
 from redis import RedisError
 from sqlalchemy import select
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from dotenv import load_dotenv
 
 from vouch import pipeline
+from vouch.agents.agents import build_graph
 from vouch.config import settings
 from vouch.context import WorkerContext, init_worker_context
 from vouch.db.models import Investigations, Submission
@@ -106,8 +108,9 @@ class LeaseAcquisitionFailed(Exception):
         super().__init__(message)
 
 class Worker:
-    def __init__(self, ctx: WorkerContext, worker_id: UUID):
+    def __init__(self, ctx: WorkerContext, graph: CompiledStateGraph, worker_id: UUID):
         self.ctx = ctx
+        self.graph = graph
         self.worker_id = worker_id
 
         self.last_recovery = time.monotonic()
@@ -267,6 +270,7 @@ class Worker:
 
                     try:
                         processing = asyncio.create_task(pipeline.run(
+                            graph=self.graph,
                             channel=event["channel"],
                             submission_id=investigation.submission_id,
                             investigation_id=investigation.investigation_id,
@@ -346,15 +350,17 @@ class Worker:
             raise
 
 class WorkerPool:
-    def __init__(self, ctx: WorkerContext, total_workers: int):
+    def __init__(self, ctx: WorkerContext, graph: CompiledStateGraph, total_workers: int):
         self.ctx = ctx
+        self.graph = graph
         self.total_workers = total_workers
 
     async def run(self):
         workers = [
             Worker(
                 worker_id=uuid7(),
-                ctx=self.ctx
+                ctx=self.ctx,
+                graph=self.graph
             )
             for i in range(self.total_workers)
         ]
@@ -368,12 +374,14 @@ async def main() -> None:
     configure_logging()
 
     ctx = await init_worker_context()
+    graph = build_graph(ctx)
 
     try:
         await ctx.stream.ensure_group(settings.job_queue_group_name)
 
         await WorkerPool(
             ctx=ctx,
+            graph=graph
             total_workers=settings.worker_count,
         ).run()
 

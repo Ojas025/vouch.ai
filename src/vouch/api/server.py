@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi import FastAPI, Request, HTTPException
 from contextlib import asynccontextmanager
 import json
@@ -32,13 +34,18 @@ TELEGRAM_WEBHOOK_SECRET = settings.telegram_webhook_secret
 stream = EventStream(redis_url=settings.redis_url, stream_name=settings.events_stream)
 ingestion_service = WebhookIngestionService(SessionLocal)
 
+async def _obscura_binary() -> Path:
+    if settings.obscura_path is None:
+        settings.set("obscura_path", await asyncio.to_thread(ensure_obscura))
+
+    assert settings.obscura_path is not None
+    return settings.obscura_path
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("FastAPI starting - Redis pool ready.")
 
-    obscura_path = await asyncio.to_thread(ensure_obscura)
-    settings.set("obscura_path", obscura_path)
-
+    await _obscura_binary()
     configure_logging()
 
     yield

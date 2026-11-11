@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import UUID
 
-from vouch.agents.agents import graph
+from langgraph.graph.state import CompiledStateGraph
 from vouch.agents.models import InvestigationState
 from vouch.docling import parse_attachments
 from vouch.downloader import download_media
@@ -15,7 +15,7 @@ from vouch.utils import retry, uuid7
 logger = get_logger(__file__)
 
 @retry(max_attempts=3)
-async def investigate(msg: CanonicalMessage):
+async def investigate(graph: CompiledStateGraph, msg: CanonicalMessage):
     initial_state: InvestigationState = {
         "investigation_id": uuid7(),
         "tasks": [],
@@ -38,7 +38,7 @@ async def investigate(msg: CanonicalMessage):
         }
     )
 
-async def run(channel: str, submission_id: UUID, investigation_id: UUID, payload: Any):
+async def run(graph: CompiledStateGraph, channel: str, submission_id: UUID, investigation_id: UUID, payload: Any):
     # adapt to IncomingMessage
     msg: IncomingMessage = adapt(channel, str(submission_id), str(investigation_id), payload)
 
@@ -64,7 +64,7 @@ async def run(channel: str, submission_id: UUID, investigation_id: UUID, payload
         # agentic reasoning
         # parallel fan-out
         # fan-in: single ledger writer
-        result = await investigate(canonical_msg)
+        result = await investigate(graph, canonical_msg)
         return result
 
     except Exception:
