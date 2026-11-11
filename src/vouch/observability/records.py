@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 from opentelemetry import trace
 
-from vouch.observability.context import CONTEXT_VARS, current_correlation
+from vouch.observability.context import current_correlation
 
 FACTORY_MARKER = "__vouch_record_factory__"
 
