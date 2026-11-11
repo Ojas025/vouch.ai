@@ -39,7 +39,7 @@ def build_agent(ctx: WorkerContext, role: AgentRole):
         logger.exception(f"Invalid model profile: {role}")
         raise
 
-    system_prompt = load_prompt(profile.system_prompt_path)
+    system_prompt = load_prompt(profile.system_prompt)
     client = LLMClient(profile, system_prompt=system_prompt)
 
     return create_agent(

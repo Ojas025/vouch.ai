@@ -16,14 +16,9 @@ from vouch.agents.models import Capability
 from vouch.agents.utils import load_prompt
 from vouch.logger import get_logger
 from vouch.observability.spans import ATTR_LLM_MODEL, SPAN_LLM_GENERATE, span
+from vouch.utils import RetryPolicy, _backoff, _is_retryable
 
 logger = get_logger(__name__)
-
-class RetryPolicy(BaseModel):
-    enabled: bool = False
-    max_attempts: int = 3
-    base_delay: int = 1
-    max_delay: int = 10
 
 class LLMProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -66,17 +61,6 @@ def _extract_retry_after(e: Exception) -> float | None:
         return None
 
     return max(0.0, timegm(t[:6]) - time())
-
-def _backoff(attempt: int, policy: RetryPolicy):
-    return random.uniform(0, min(policy.max_delay, policy.base_delay * (2 ** attempt)))
-
-
-def _is_retryable(error: Exception) -> bool:
-    if isinstance(error, ModelError):
-        return bool(getattr(error, "is_retryable", False))
-    if isinstance(error, (ConnectionError, TimeoutError)):
-        return True
-    return False
 
 class LLMClient:
     def __init__(self, profile: LLMProfile, system_prompt: Path | str | None = None, output_model: type[BaseModel] | None = None):
