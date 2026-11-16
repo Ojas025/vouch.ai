@@ -193,8 +193,6 @@ PAGE_LOADED_PATTERN = re.compile(r'^Page loaded:\s*(https?://[^\s]+)\s*-\s*"(.*)
 MAX_STDOUT_BYTES = 512 * 1024
 MAX_STDERR_BYTES = 64 * 1024
 
-OBSCURA_PATH = settings.obscura_path or "obscura"
-
 async def _run_obscura_safe(
     cmd_args: list[str],
     target_url: str,
@@ -208,7 +206,7 @@ async def _run_obscura_safe(
         "HOME": "/tmp",
     }
 
-    full_args = [str(OBSCURA_PATH), "fetch"] + cmd_args + ["--", target_url]
+    full_args = [str(settings.obscura_path or "obscura"), "fetch"] + cmd_args + ["--", target_url]
 
     async with OBSCURA_SEMAPHORE:
         proc = await asyncio.create_subprocess_exec(
