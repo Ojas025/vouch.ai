@@ -206,9 +206,8 @@ async def _run_obscura_safe(
         "HOME": "/tmp",
     }
 
-    full_args = [str(settings.obscura_path or "obscura"), "fetch"] + cmd_args + ["--", target_url]
-
     async with OBSCURA_SEMAPHORE:
+        full_args = [str(settings.obscura_path or "obscura"), "fetch"] + cmd_args + ["--", target_url]
         proc = await asyncio.create_subprocess_exec(
             *full_args,
             stdout=asyncio.subprocess.PIPE,
