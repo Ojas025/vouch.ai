@@ -381,7 +381,7 @@ async def main() -> None:
 
         await WorkerPool(
             ctx=ctx,
-            graph=graph
+            graph=graph,
             total_workers=settings.worker_count,
         ).run()
 

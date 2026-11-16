@@ -4,6 +4,8 @@ import operator
 from typing import Annotated, Literal, TypedDict
 from uuid import UUID, uuid4
 
+from litellm import reasoning_auto_summary
+from litellm.litellm_core_utils.streaming_chunk_builder_utils import concatenate_base64_list
 from pydantic import BaseModel, ConfigDict, Field
 
 from vouch.decision import DecisionRecord, Verdict
@@ -31,6 +33,17 @@ class Hypotheses(BaseModel):
     expires_at: datetime | None = None
     provenance: Provenance
     trust: Literal[TrustLevel.MODEL_OUTPUT, TrustLevel.DETERMINISTIC] = TrustLevel.MODEL_OUTPUT
+
+class VerifierAssessment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    hypotheses_id: str
+    status: Literal["valid", "invalid", "inconclusive"]
+    supporting_evidence_refs: list[str] = Field(default_factory=list)
+    contradicting_evidence_refs: list[str] = Field(default_factory=list)
+    unresolved_questions: list[str] = Field(default_factory=list)
+    provenance: Provenance
+    trust: TrustLevel = TrustLevel.MODEL_OUTPUT
 
 class AgentRole(str, Enum):
     ORCHESTRATOR = "orchestrator"
@@ -130,15 +143,24 @@ class Synthesis(BaseModel):
     decision: DecisionRecord
     response: str
 
+class TaskPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    investigation_id: UUID
+    tasks: list[Task] = Field(default_factory=list)
+    disposition: Literal["dispatch", "no_actionable_tasks", "blocked", "malformed_tasks"]
+
 class InvestigationState(TypedDict):
     investigation_id: UUID
-    input_msg: str
+    original_request: str
 
-    tasks: Annotated[list[Task], operator.add]
+    task_plan: TaskPlan
     worker_results: Annotated[list[WorkerResult], operator.add]
 
     drafts: Annotated[list[EvidenceDraft], operator.add]
+    accepted_evidences: Annotated[list[str], operator.add]
     hypotheses: Annotated[list[Hypotheses], operator.add]
+    verifier_assessments: Annotated[list[VerifierAssessment], operator.add]
 
     verdict: Verdict | None
     synthesis: Synthesis | None
@@ -148,3 +170,19 @@ class InvestigationState(TypedDict):
 
     stage: Literal["orchestration", "modality", "hypotheses", "verification", "synthesis"]
     iterations: int
+
+class TaskExecutionInput(TypedDict):
+    investigation_id: UUID
+    task: Task
+    input_message: dict
+
+class HypothesesOutput(BaseModel):
+    hypotheses: list[Hypotheses] = Field(default_factory=list)
+
+class OrchestratorOutput(BaseModel):
+    disposition: Literal["dispatch", "no_actionable_tasks", "blocked"]
+    tasks: list[Task] = Field(default_factory=list)
+
+class VerifierOutput(BaseModel):
+    verifier_assessments: list[VerifierAssessment] = Field(default_factory=list)
+    verdict: Verdict | None = None

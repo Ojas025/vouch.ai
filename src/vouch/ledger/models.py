@@ -1,14 +1,20 @@
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from vouch.agents.models import SourceRef
 from vouch.security import EntityRef, Provenance, TrustLevel
+
+class SourceRef(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source_type: Literal["evidence", "tool_result", "artifact"]
+    source_id: str = Field(min_length=1, max_length=128)
 
 class EvidenceDraft(BaseModel):
     """Application-validated evidence, awaiting ledger commit."""
-    investigation_id: str
+    investigation_id: UUID
     kind: Literal["source_observation", "interpretation"]
     finding: str = Field(min_length=1, max_length=1200)
 
@@ -24,7 +30,7 @@ class Evidence(EvidenceDraft):
     """Append-only. Minted only by the ledger writer."""
     evidence_id: str
     ledger_seq: int
-    investigation_id: str
+    investigation_id: UUID
     supersedes: str | None = None # evidence_id this replaces
 
 class LedgerItemSnapshot(BaseModel):

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from vouch.agents.llm import LLMProfile
-from vouch.agents.models import AgentRole, Capability
+from vouch.agents.models import AgentRole, Capability, HypothesesOutput, OrchestratorOutput, VerifierOutput
 from vouch.tools.models import ToolDefinition, ToolSideEffects
 from vouch.tools.tools.entity import EntityIntelArgs, EntityIntelOutput, entity_intel
 from vouch.tools.tools.web import ExtractPageContentArgs, ExtractPageContentOutput, ScreenshotPageArgs, ScreenshotPageOutput, WebInspectArgs, WebInspectOutput, WebSearchArgs, extract_page_content, screenshot_page, web_inspect, web_search
@@ -66,6 +66,7 @@ PROFILES: dict[AgentRole, LLMProfile] = {
         api_key="not-required",
         base_url="http://127.0.0.1:8080/v1",
         capabilities=[Capability.TOOLS, Capability.JSON_SCHEMA, Capability.REASONING],
+        output_model=OrchestratorOutput,
     ),
     AgentRole.APK_AGENT: LLMProfile(
         model="minicpm",
@@ -90,12 +91,14 @@ PROFILES: dict[AgentRole, LLMProfile] = {
         api_key="not-required",
         base_url="http://127.0.0.1:8080/v1",
         capabilities=[Capability.TOOLS, Capability.JSON_SCHEMA, Capability.VISION],
+        output_model=HypothesesOutput,
     ),
     AgentRole.VERIFIER: LLMProfile(
         model="minicpm",
         api_key="not-required",
         base_url="http://127.0.0.1:8080/v1",
         capabilities=[Capability.TOOLS, Capability.JSON_SCHEMA],
+        output_model=VerifierOutput
     ),
     AgentRole.SYNTHESIS: LLMProfile(
         model="minicpm",

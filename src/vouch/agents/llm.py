@@ -32,6 +32,8 @@ class LLMProfile(BaseModel):
     max_retries: int = Field(default=3, ge=0, le=5)
     model_kwargs: dict[str, Any] = Field(default_factory=dict)
 
+    output_model : type[BaseModel] | None = None
+
     temperature: float = 1.0
     max_tokens: int = 1000
 
