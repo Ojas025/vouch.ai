@@ -193,7 +193,7 @@ PAGE_LOADED_PATTERN = re.compile(r'^Page loaded:\s*(https?://[^\s]+)\s*-\s*"(.*)
 MAX_STDOUT_BYTES = 512 * 1024
 MAX_STDERR_BYTES = 64 * 1024
 
-OBSCURA_PATH = settings.obscura_path
+OBSCURA_PATH = settings.obscura_path or "obscura"
 
 async def _run_obscura_safe(
     cmd_args: list[str],
