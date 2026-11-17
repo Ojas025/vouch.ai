@@ -11,11 +11,14 @@ import signal
 import struct
 import tempfile
 import unicodedata
-from urllib.parse import urldefrag, urljoin, urlparse
+from urllib.parse import urldefrag, urljoin, urlparse, urlsplit
 
 import httpx
-from pydantic import BaseModel
+from pydantic import AnyHttpUrl, BaseModel, Field, TypeAdapter, ValidationError
+from tavily import AsyncTavilyClient, BadRequestError, InvalidAPIKeyError, MissingAPIKeyError, TavilyClient, TavilyKeylessLimitError, UsageLimitExceededError
 
+from tavily.errors import ForbiddenError
+from vouch.bootstrap.obscura import ensure_obscura
 from vouch.config import settings
 from vouch.logger import get_logger
 from vouch.security import Provenance, TrustLevel
@@ -66,8 +69,12 @@ async def validate_url(raw_url: str) -> tuple[UrlPolicyVerdict, str | None]:
     if not p.hostname:
         return UrlPolicyVerdict.INVALID_SYNTAX, None
 
-    # Restrict ports to 80 / 443 (default port is None)
-    if p.port is not None and p.port not in ALLOWED_PORTS:
+    try:
+        port = p.port
+    except ValueError:
+        return UrlPolicyVerdict.INVALID_SYNTAX, None
+
+    if port is not None and port not in ALLOWED_PORTS:
         return UrlPolicyVerdict.NON_STANDARD_PORT, None
 
     # Pre-flight DNS & IP check
@@ -521,10 +528,162 @@ async def screenshot_page(args: ScreenshotPageArgs) -> ScreenshotPageOutput:
 # =================================== WEB SEARCH ==============================================
 
 class WebSearchArgs(BaseModel):
-    query: str
+    query: str = Field(min_length=3, max_length=500)
+
+class SearchResult(BaseModel):
+    title: str
+    url: str
+    snippet: str
+    score: float | None = None
+    published_date: datetime | None = None
+
+class WebSearchError(StrEnum):
+    USAGE_LIMIT_EXCEEDED = "usage_limit_exceeded"
+    AUTHENTICATION_FAILED = "authentication_failed"
+    ACCESS_DENIED = "access_denied"
+    BAD_REQUEST = "bad_request"
+    INTERNAL_ERROR = "internal_error"
+    HTTP_ERROR = "http_error"
+    NETWORK_ERROR = "network_error"
+    INVALID_RESPONSE = "invalid_response"
 
 class WebSearchOutput(BaseModel):
-    ...
+    results: list[SearchResult] = Field(default_factory=list)
+    trust: TrustLevel = TrustLevel.EXTERNAL_SOURCE
+    provenance: Provenance | None = None
+    error: WebSearchError | None = None
+
+MAX_SEARCH_RESULTS = 10
+
+tavily_http = httpx.AsyncClient(
+    base_url="https://api.tavily.com",
+    timeout=httpx.Timeout(12.0, connect=3.0, pool=2.0),
+    limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+    follow_redirects=False,
+    trust_env=False
+)
+tavily_client = AsyncTavilyClient(api_key=settings.tavily_api_key, client=tavily_http)
+
+URL_ADAPTER = TypeAdapter(AnyHttpUrl)
 
 async def web_search(args: WebSearchArgs) -> WebSearchOutput:
-    ...
+
+    def failure(error: WebSearchError) -> WebSearchOutput:
+        return WebSearchOutput(
+            error=error,
+            provenance=Provenance(
+                producer_type="SERVICE",
+                producer_id="tavily",
+                tool_name="web_search",
+                tool_version="1.0",
+                observed_at=datetime.now(timezone.utc),
+            )
+        )
+
+    try:
+        response = await tavily_client.search(
+            query=args.query,
+            timeout=12.0,
+            search_depth="basic",
+            topic="general",
+            max_results=MAX_SEARCH_RESULTS,
+
+            include_answer=False,
+            include_raw_content=False,
+            include_images=False,
+        )
+
+    except UsageLimitExceededError as e:
+        logger.warning(f"tavily usage limit reached: {type(e).__name__}")
+        return failure(WebSearchError.USAGE_LIMIT_EXCEEDED)
+
+    except (InvalidAPIKeyError, MissingAPIKeyError) as e:
+        logger.error(f"tavily authentication failed: {type(e).__name__}")
+        return failure(WebSearchError.AUTHENTICATION_FAILED)
+
+    except ForbiddenError:
+        logger.error("tavily rejected request")
+        return failure(WebSearchError.ACCESS_DENIED)
+
+    except BadRequestError:
+        logger.exception("tavily rejected the search parameters")
+        return failure(WebSearchError.BAD_REQUEST)
+
+    except httpx.RequestError as e:
+        logger.warning("tavily network error: type=%s", type(e).__name__)
+        return failure(WebSearchError.NETWORK_ERROR)
+
+    except httpx.HTTPStatusError as e:
+        logger.error("tavily HTTP failure: status=%s", e.response.status_code)
+        return failure(WebSearchError.HTTP_ERROR)
+
+    except Exception as e:
+        logger.exception("unexpected tavily failure: type=%s", type(e).__name__)
+        return failure(WebSearchError.INTERNAL_ERROR)
+
+    raw_results = response["results"]
+    results = []
+    rejected_results = 0
+
+    for item in raw_results[:MAX_SEARCH_RESULTS]:
+        if not isinstance(item, dict):
+            rejected_results += 1
+            continue
+
+        raw_url = item.get("url")
+
+        try:
+            parsed_url = URL_ADAPTER.validate_python(raw_url)
+
+            if parsed_url.scheme not in ("http", "https"):
+                rejected_results += 1
+                continue
+
+            url_parts = urlsplit(str(parsed_url))
+
+            if (not url_parts.hostname or url_parts.username is not None or url_parts.password is not None):
+                rejected_results += 1
+                continue
+
+            validated_url = str(parsed_url)
+
+        except (ValidationError, TypeError, ValueError):
+            rejected_results += 1
+            continue
+
+        title = item.get("title")
+        snippet = item.get("content")
+
+        title = title[:300] if isinstance(title, str) else ""
+        snippet = snippet[:2000] if isinstance(snippet, str) else ""
+
+        if not title and not snippet:
+            rejected_results += 1
+            continue
+
+        try:
+
+            results.append(
+                SearchResult(
+                    title=title,
+                    url=validated_url,
+                    snippet=snippet,
+                    score=item.get("score"),
+                    published_date=item.get("published_date"),
+                )
+            )
+
+        except ValidationError:
+            rejected_results += 1
+            continue
+
+    return WebSearchOutput(
+        results=results,
+        provenance=Provenance(
+            producer_type="SERVICE",
+            producer_id="tavily",
+            tool_name="web_search",
+            tool_version="1.0",
+            observed_at=datetime.now(timezone.utc),
+        )
+    )

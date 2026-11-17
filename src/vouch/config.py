@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     whatsapp_secret: str = ""
     telegram_webhook_secret: str = ""
 
+    tavily_api_key: str = ""
+
     abuse_ch_auth_key: str = ""
 
     virustotal_api_key: str = ""
