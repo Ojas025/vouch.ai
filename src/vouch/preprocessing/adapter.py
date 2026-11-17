@@ -5,15 +5,14 @@ Adapter for converting raw Telegram or Whatsapp payload into canonical MessageSu
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Any, Literal
-from uuid import UUID
+from typing import Any
 
 from vouch.ingestion import (
     AttachmentMetadata,
     Channel,
-    Event,
     IncomingMessage,
 )
+from vouch.preprocessing.models import Modality
 
 def _adapt_whatsapp(raw_payload: dict[str, Any], submission_id: str, investigation_id: str) -> IncomingMessage:
     """Adapt a Meta WhatsApp Cloud API webhook payload to IncomingMessage.
@@ -56,12 +55,13 @@ def _adapt_whatsapp(raw_payload: dict[str, Any], submission_id: str, investigati
         if block:
             media.append(
                 AttachmentMetadata(
-                    kind=kind,
+                    kind=Modality(kind),
                     file_id=block["id"],
                     file_name=block.get("filename", ""),
                     mime_type=block["mime_type"],
                     file_size_bytes=block.get("file_size", 0),
                     sha256=block.get("sha256"),
+                    status='pending'
                 )
             )
 
@@ -137,11 +137,12 @@ def _adapt_telegram(raw_payload: dict[str, Any], submission_id: str, investigati
         largest = max(msg["photo"], key=lambda p: p.get("width", 0) * p.get("height", 0))
         media.append(
             AttachmentMetadata(
-                kind="image",
+                kind=Modality("image"),
                 file_id=largest["file_id"],
                 file_name="",
                 mime_type="image/jpeg",
                 file_size_bytes=largest.get("file_size", 0),
+                status='pending'
             )
         )
     for kind, key in (("document", "document"), ("audio", "audio"), ("voice", "voice"), ("video", "video")):
@@ -149,11 +150,12 @@ def _adapt_telegram(raw_payload: dict[str, Any], submission_id: str, investigati
         if block:
             media.append(
                 AttachmentMetadata(
-                    kind=kind,
+                    kind=Modality(kind),
                     file_id=block["file_id"],
                     file_name=block.get("file_name", ""),
                     mime_type=block.get("mime_type", ""),
                     file_size_bytes=block.get("file_size", 0),
+                    status='pending'
                 )
             )
 
@@ -189,6 +191,52 @@ def _adapt_telegram(raw_payload: dict[str, Any], submission_id: str, investigati
         media=media,
     )
 
+def _adapt_web(raw_payload: dict[str, Any], submission_id: str, investigation_id: str) -> IncomingMessage:
+    """Adapt a web investigation request to IncomingMessage.
+
+    Expected payload shape (abbreviated):
+    {
+      "event_id": 123456,
+      "message": "...",
+      "attachments": [{"file_name": "...", "mime_type": "...", "file_size_bytes": 0, "sha256": "..."}, ...]
+    }
+    """
+    attachments = [
+        AttachmentMetadata(
+            kind=Modality("document"),
+            file_id="",
+            file_name=att.get("file_name", ""),
+            mime_type=att.get("mime_type", ""),
+            file_size_bytes=att.get("file_size_bytes", 0),
+            sha256=att.get("sha256"),
+            status='pending'
+        )
+        for att in raw_payload.get("attachments", [])
+    ]
+
+    sent_at = datetime.now(tz=timezone.utc)
+
+    return IncomingMessage(
+        submission_id=submission_id,
+        channel=Channel.WEB,
+        investigation_id=investigation_id,
+        provider="web",
+        message_id=str(raw_payload["event_id"]),
+        text=raw_payload.get("message", ""),
+        caption="",
+        timestamp=sent_at,
+        sent_at=sent_at,
+        received_at=datetime.now(tz=timezone.utc),
+        sender_id="",
+        recipient_id="",
+        gateway_account_id=0,
+        forwarded_origin=None,
+        is_frequently_forwarded=False,
+        payload_digest=hashlib.sha256(
+            json.dumps(raw_payload, sort_keys=True).encode("utf-8")
+        ).hexdigest(),
+        media=attachments,
+    )
 
 def adapt(channel: str, submission_id: str, investigation_id: str, payload: Any) -> IncomingMessage:
     """Dispatch on the event's channel.
@@ -203,5 +251,7 @@ def adapt(channel: str, submission_id: str, investigation_id: str, payload: Any)
         return _adapt_whatsapp(payload, submission_id, investigation_id)
     elif channel == "telegram":
         return _adapt_telegram(payload, submission_id, investigation_id)
+    elif channel == "web":
+        return _adapt_web(payload, submission_id, investigation_id)
     else:
         raise ValueError(f"unsupported channel: {channel}")

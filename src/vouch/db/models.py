@@ -356,6 +356,7 @@ class Artifacts(Base):
 
     sha256_digest: Mapped[str] = mapped_column(
         String,
+        unique=True,
     )
 
     investigation_id: Mapped[uuid.UUID] = mapped_column(

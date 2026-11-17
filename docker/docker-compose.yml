@@ -159,8 +159,8 @@ services:
       POSTGRES_DB: vouch
     volumes:
       - pgdata:/var/lib/postgresql
-    # Not published: the app reaches it over the compose network, and a host
-    # port here would collide with a locally running server.
+    ports:
+     - 127.0.0.1:5432:5432
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d vouch"]
       interval: 5s

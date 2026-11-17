@@ -9,7 +9,7 @@ from vouch.preprocessing.models import Modality
 class Channel(str, Enum):
     WHATSAPP = "whatsapp"
     TELEGRAM = "telegram"
-    REST = "rest"
+    WEB = "web"
 
 class MediaDownloadMetadata(BaseModel):
     url: str = ""

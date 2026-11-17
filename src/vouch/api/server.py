@@ -7,7 +7,10 @@ import hashlib
 from dotenv import load_dotenv
 import asyncio
 
-from vouch.api.ingestion import WebhookIngestionService
+from hypothesis.internal.cache import V
+from pydantic import ValidationError
+from vouch.api.ingestion import IngestionResult, WebhookIngestionService
+from vouch.api.models import TelegramWebhookRequest, WebInvestigationRequest, WhatsAppWebhookRequest
 from vouch.bootstrap.obscura import ensure_obscura
 from vouch.config import settings
 from vouch.db.session import SessionLocal
@@ -26,7 +29,7 @@ provider_event_id:
 """
 
 if not settings.whatsapp_secret or not settings.telegram_webhook_secret:
-    raise RuntimeError("WHATSAPP_SECRET and TELEGRAM_WEBHOOK_SECRET must be set")
+    raise RuntimeError("WHATSAPP_WEB_SECRET and TELEGRAM_WEBHOOK_SECRET must be set")
 
 WHATSAPP_SECRET = settings.whatsapp_secret
 TELEGRAM_WEBHOOK_SECRET = settings.telegram_webhook_secret
@@ -63,7 +66,7 @@ def pong(request: Request):
         "message": "pong"
     }
 
-@app.post("/v1/webhook/whatsapp")
+@app.post("/v1/webhook/whatsapp", status_code=202)
 async def whatsapp_webhook(request: Request):
     body = await request.body()
 
@@ -75,26 +78,55 @@ async def whatsapp_webhook(request: Request):
         raise HTTPException(status_code=401) # Unauthorized
 
     payload_digest = hashlib.sha256(body).hexdigest()
-    try:
-        payload = json.loads(body)
-        provider_event_id = str(payload["entry"][0]["changes"][0]["messages"][0]["id"])
 
-    except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+    try:
+        raw_payload = json.loads(body)
+        payload = WhatsAppWebhookRequest.model_validate(raw_payload)
+
+
+    except (json.JSONDecodeError, UnicodeDecodeError, ValidationError):
         raise HTTPException(status_code=400)
 
-    # persist to postgresql
-    _ = await ingestion_service.ingest(
-        "whatsapp",
-        "0",
-        provider_event_id,
-        payload,
-        payload_digest,
-    )
+    messages = [
+        message
+        for entry in payload.entry
+        for change in entry.changes
+        for message in change.value.messages
+    ]
 
+    if not messages:
+        return {"ok": True}
 
-    return {"ok": True}
+    if len(messages) != 1:
+        logger.warning("Multiple messages in a single webhook payload are not supported")
+        raise HTTPException(status_code=400)
 
-@app.post("/v1/webhook/telegram")
+    provider_event_id = messages[0].id
+
+    try:
+        # persist to postgresql
+        ingestion_result: IngestionResult = await ingestion_service.ingest(
+            "whatsapp",
+            "0",
+            provider_event_id,
+            raw_payload,
+            payload_digest,
+        )
+
+    except Exception:
+        logger.exception("Failed to ingest webhook submission")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal Server Error",
+        )
+
+    return {
+        "ok": True,
+        "submission_id": ingestion_result.submission_id,
+        "is_duplicate": ingestion_result.is_duplicate,
+    }
+
+@app.post("/v1/webhook/telegram", status_code=202)
 async def telegram_webhook(request: Request):
     body = await request.body()
 
@@ -105,21 +137,65 @@ async def telegram_webhook(request: Request):
         raise HTTPException(status_code=401)
 
     payload_digest = hashlib.sha256(body).hexdigest()
-    try:
-        payload = json.loads(body)
-        provider_event_id = str(payload["update_id"])
 
-    except (json.JSONDecodeError, KeyError, TypeError):
+    try:
+        raw_payload = json.loads(body)
+        payload = TelegramWebhookRequest.model_validate(raw_payload)
+
+    except (json.JSONDecodeError, UnicodeDecodeError, ValidationError):
         raise HTTPException(status_code=400)
 
-    # Transactional Outbox
-    _ = await ingestion_service.ingest(
-        "telegram",
-        "0",
-        provider_event_id,
-        payload,
-        payload_digest,
-    )
+    provider_event_id = str(payload.update_id)
+
+    try:
+        # Transactional Outbox
+        ingestion_result: IngestionResult = await ingestion_service.ingest(
+            "telegram",
+            "0",
+            provider_event_id,
+            raw_payload,
+            payload_digest,
+        )
+
+    except Exception:
+        logger.exception("Failed to ingest webhook submission")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal Server Error",
+        )
 
     # Commit succeeded -> Submission + Event exists in Postgresql
-    return {"ok": True}
+    return {
+        "ok": True,
+        "submission_id": ingestion_result.submission_id,
+        "is_duplicate": ingestion_result.is_duplicate,
+    }
+
+@app.post("/v1/investigate", status_code=202)
+async def investigate(request: WebInvestigationRequest):
+    logger.info("Received investigation request", extra={"channel": "web"})
+
+    payload = request.model_dump()
+
+    payload_digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+    try:
+        ingestion_result: IngestionResult = await ingestion_service.ingest(
+            "web",
+            "0",
+            request.event_id,
+            payload,
+            payload_digest,
+        )
+
+    except Exception as e:
+        logger.error("Failed to ingest investigation request", extra={"error": str(e)})
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+    return {
+        "ok": True,
+        "submission_id": ingestion_result.submission_id,
+        "is_duplicate": ingestion_result.is_duplicate,
+    }
