@@ -28,6 +28,7 @@ class AuditEvent(StrEnum):
     TOOL_CALL_FAILED = "tool_call.failed"
     TOOL_CALL_TIMED_OUT = "tool_call.timed_out"
     TOOL_CALL_CANCELLED = "tool_call.cancelled"
+    INVESTIGATION_HALTED = "investigation.halted"
 
 
 class AuditEmitStatus(StrEnum):

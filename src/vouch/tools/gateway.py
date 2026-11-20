@@ -21,6 +21,7 @@ from vouch.observability.spans import (
     span,
 )
 from vouch.tools import policy
+from vouch.tools.budget import BudgetManager
 from vouch.tools.exceptions import RetryableToolError
 from vouch.tools.models import DecisionEffect, ToolCallRequest, ToolCallResponse, ToolFailureReason, ToolSideEffects
 from vouch.tools.rate_limit import RateLimiter
@@ -36,11 +37,14 @@ class ToolAdmissionResponse(BaseModel):
     status: str
 
 class ToolGateway:
-    def __init__(self, registry: ToolRegistry, rate_limiter: RateLimiter, session_factory: async_sessionmaker[AsyncSession], max_output_chars: int = 10000):
+    def __init__(self, registry: ToolRegistry, budget_manager: BudgetManager, rate_limiter: RateLimiter, session_factory: async_sessionmaker[AsyncSession], max_output_chars: int = 10000):
         self.max_output_chars = max_output_chars
         self.registry = registry
         self.rate_limiter = rate_limiter
         self.session_factory = session_factory
+        self.budget_manager = budget_manager
+
+        self._halted: dict[str, Any] = {}
 
     async def _get_or_update_tool_call(self, investigation_id: str, tool_call_id: str, tool_name: str, tool_version: str, agent_role: str, task_id: str, args: dict) -> ToolAdmissionResponse | None:
         logger.info(
@@ -254,6 +258,16 @@ class ToolGateway:
             raise RetryableToolError("Rate limit reached")
 
         # Check investigation budget
+        if self._halted.get(investigation_id, False):
+            is_halted = True
+        else:
+            is_halted = await self.budget_manager.try_consume(investigation_id, tool_name=req.tool_name, limit=tool.max_calls_per_investigation)
+
+        if is_halted:
+            self._halted[investigation_id] = True
+
+            _emit(AuditEvent.INVESTIGATION_HALTED, investigation_id=investigation_id)
+            return _failed_response(ToolFailureReason.INVESTIGATION_HALTED)
 
         # First point at which dispatched=True is truthful.
         _emit(AuditEvent.TOOL_CALL_EXECUTION_STARTED, tool_side_effects=tool.side_effects, tool_version=tool.version, dispatched=True)
@@ -278,7 +292,7 @@ class ToolGateway:
                     ATTR_TOOL_NAME: req.tool_name,
                     ATTR_TOOL_VERSION: tool.version,
                     ATTR_TOOL_CALL_ID: tool_call_id,
-                    ATTR_ATTEMPT_NO: resp.attempts,
+                    ATTR_ATTEMPT_NO: resp.attempts if resp else 1,
                 },
             ):
                 # Re-baselined so elapsed_ms measures the tool, not the span.

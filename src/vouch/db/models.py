@@ -18,7 +18,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql.sqltypes import UUID
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -198,6 +198,12 @@ class Investigations(Base):
 
     tool_call_limit: Mapped[int] = mapped_column(Integer, server_default=text("30"))
     tool_calls_used: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+
+    tool_budgets: Mapped[list["InvestigationToolBudgets"]] = relationship(
+        back_populates="investigation",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
     lease_owner: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
@@ -523,4 +529,46 @@ class Entities(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
+    )
+
+class InvestigationToolBudgets(Base):
+    __tablename__ = "investigation_tool_budgets"
+    __table_args__ = (
+        UniqueConstraint(
+            "investigation_id",
+            "tool_name",
+            name="uq_investigation_tool_budget",
+        ),
+        CheckConstraint(
+            "tool_calls_used >= 0",
+            name="ck_tool_budget_calls_used_nonnegative",
+        ),
+    )
+
+    investigation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "investigations.investigation_id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+
+    tool_name: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    tool_calls_used: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    investigation: Mapped["Investigations"] = relationship(
+        back_populates="tool_budgets",
     )

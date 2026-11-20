@@ -18,6 +18,7 @@ class ToolDefinition(BaseModel):
     version: str = "1.0"
     side_effects: ToolSideEffects = ToolSideEffects.READ_ONLY
     timeout_sec: float = 10.0
+    max_calls_per_investigation: int = 10
 
 class ToolCallRequest(BaseModel):
     """
@@ -41,6 +42,7 @@ class ToolFailureReason(str, Enum):
     OUTPUT_VALIDATION_FAILED = "output_validation_failed"
     APPROVAL_REJECTED = "approval_rejected"
     NETWORK_DISALLOWED = "network_disallowed"
+    INVESTIGATION_HALTED = "investigation_halted"
 
 class DecisionEffect(str, Enum):
     PERMIT = "permit"

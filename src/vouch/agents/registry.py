@@ -23,6 +23,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         output_model=EntityIntelOutput,
         side_effects=ToolSideEffects.NETWORK,
         timeout_sec=30.0,
+        max_calls_per_investigation=10
     ),
     ToolDefinition(
         tool_name="web_inspect",
@@ -32,6 +33,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         output_model=WebInspectOutput,
         side_effects=ToolSideEffects.NETWORK,
         timeout_sec=15.0,
+        max_calls_per_investigation=10
     ),
     ToolDefinition(
         tool_name="extract_page_content",
@@ -41,6 +43,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         output_model=ExtractPageContentOutput,
         side_effects=ToolSideEffects.NETWORK,
         timeout_sec=25.0,
+        max_calls_per_investigation=10
     ),
     ToolDefinition(
         tool_name="screenshot_page",
@@ -50,6 +53,7 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         output_model=ScreenshotPageOutput,
         side_effects=ToolSideEffects.NETWORK,
         timeout_sec=25.0,
+        max_calls_per_investigation=15
     ),
     ToolDefinition(
         tool_name="web_search",
@@ -58,7 +62,8 @@ TOOL_DEFINITIONS: list[ToolDefinition] = [
         args_model=WebSearchArgs,
         output_model=WebInspectOutput,
         side_effects=ToolSideEffects.NETWORK,
-        timeout_sec=25.0
+        timeout_sec=25.0,
+        max_calls_per_investigation=10
     )
 ]
 
