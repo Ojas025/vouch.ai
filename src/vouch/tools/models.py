@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Callable, Literal
+from typing import Any, Callable
 
 from pydantic import BaseModel
 
@@ -27,7 +27,7 @@ class ToolCallRequest(BaseModel):
     """
     tool_name: str
     arguments: dict
-    agent_id: str
+    agent_role: str
     task_id: str
 
 class ToolFailureReason(str, Enum):
@@ -57,9 +57,4 @@ class ToolCallResponse(BaseModel):
     failure_reason: ToolFailureReason | None = None
     result: Any = None
     elapsed_ms: float = 0.0
-    tool_invocation_id: str
-
-class AgentContext(BaseModel):
-    agent_id: str
-    allowed_tools: list[ToolDefinition]
-    network_policy: Literal["none", "search_only"] = "none"
+    tool_call_id: str

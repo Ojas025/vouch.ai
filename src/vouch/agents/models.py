@@ -4,10 +4,10 @@ import operator
 from typing import Annotated, Literal, TypedDict
 from uuid import UUID, uuid4
 
-from litellm import reasoning_auto_summary
 from litellm.litellm_core_utils.streaming_chunk_builder_utils import concatenate_base64_list
 from pydantic import BaseModel, ConfigDict, Field
 
+from vouch.agents.llm import Capability, LLMProfile
 from vouch.decision import DecisionRecord, Verdict
 from vouch.ledger.models import EvidenceDraft, SourceRef
 from vouch.preprocessing.models import EntityType
@@ -54,19 +54,12 @@ class AgentRole(str, Enum):
     WEB_AGENT = "web_agent"
     ARTIFACT_AGENT = "artifact_agent"
 
-class Capability(str, Enum):
-    VISION = "vision"
-    JSON_SCHEMA = "json_schema"
-    TOOLS = "tools"
-    REASONING = "reasoning"
-
 class AgentProfile(BaseModel):
     role: AgentRole
-    model: str
+    llm_profile: LLMProfile
     allowed_tools: frozenset[str]
     network_policy: Literal["none", "search_only"]
     prompt_version: str
-    capabilities: set[Capability]
 
 class MessageType(str, Enum):
     CLAIMS = "claims"
@@ -154,7 +147,7 @@ class InvestigationState(TypedDict):
     investigation_id: UUID
     original_request: str
 
-    task_plan: TaskPlan
+    task_plan: TaskPlan | None
     worker_results: Annotated[list[WorkerResult], operator.add]
 
     drafts: Annotated[list[EvidenceDraft], operator.add]
@@ -186,3 +179,7 @@ class OrchestratorOutput(BaseModel):
 class VerifierOutput(BaseModel):
     verifier_assessments: list[VerifierAssessment] = Field(default_factory=list)
     verdict: Verdict | None = None
+
+class SynthesisOutput(BaseModel):
+    response: str
+    decision: Literal["inconclusive", "risky", "safe"]

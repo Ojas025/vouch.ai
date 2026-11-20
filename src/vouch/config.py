@@ -23,7 +23,6 @@ class Settings(BaseSettings):
     # Job queue
     job_queue_stream_key: str = "vouch:jobs"
     job_queue_group_name: str = "vouch-workers"
-    events_stream: str = "events:stream"
 
     # Worker
     worker_count: int = Field(default=4, alias="VOUCH_WORKER_COUNT")

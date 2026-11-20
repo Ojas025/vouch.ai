@@ -1,23 +1,29 @@
+from dataclasses import dataclass
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
+import datetime
 
 from langgraph.types import Send
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from vouch.agents.llm import LLMClient
+from vouch.agents.middlewares.tool_call import ToolCallMiddleware
 from vouch.agents.models import AgentRole, EvidenceCandidateBatch, Hypotheses, InvestigationState, Status, Synthesis, Task, TaskExecutionInput, TaskPlan, VerifierAssessment, WorkerResult
 from vouch.agents.registry import PROFILES, TOOLSETS
 from vouch.agents.utils import load_prompt
 from vouch.context import WorkerContext
 from vouch.db.models import Artifacts, Entities, Ledger, ToolCalls
-from vouch.decision import Verdict
+from vouch.decision import DecisionRecord, DecisionStatus, Verdict
 from vouch.ledger.models import Evidence, EvidenceDraft
 from vouch.logger import get_logger
 
 from langgraph.graph import StateGraph, START, END
 from langchain.agents import create_agent
+from langchain.agents.middleware import ToolRetryMiddleware
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from vouch.preprocessing.entities import normalize_entity
 from vouch.security import EntityRef, Provenance, TrustLevel
+from vouch.tools.exceptions import RetryableToolError
 
 """
 Anything that the model MUST do -> a tool
@@ -25,6 +31,12 @@ Anything that MUST happen -> node code
 """
 
 logger = get_logger(__file__)
+
+@dataclass
+class AgentRuntimeContext:
+    investigation_id: UUID
+    agent_role: AgentRole
+    task_id: UUID | None = None
 
 def build_agent(ctx: WorkerContext, role: AgentRole):
     """Build a LangChain agent for the given role."""
@@ -41,115 +53,102 @@ def build_agent(ctx: WorkerContext, role: AgentRole):
         logger.exception(f"Invalid model profile: {role}")
         raise
 
-    system_prompt_path = Path(__file__).parent / "prompts" / f"{role.value}.md"
+    system_prompt_path = Path(__file__).parent / "prompts" / f"{role.value}.prompt.md"
     system_prompt = load_prompt(system_prompt_path)
-    client = LLMClient(profile, system_prompt=system_prompt)
+    client = LLMClient(profile.llm_profile, system_prompt=system_prompt)
 
     return create_agent(
         model=client.base_model,
         tools=tools,
         name=role.value,
         system_prompt=system_prompt,
-        response_format=profile.output_model,
+        response_format=profile.llm_profile.output_model,
+        middleware=[
+            ToolRetryMiddleware(
+                max_retries=2,
+                retry_on=(RetryableToolError,),
+                backoff_factor=2.0,
+                initial_delay=1.0,
+                max_delay=10.0,
+                jitter=True,
+                on_failure="continue"
+            ),
+            ToolCallMiddleware(gateway=ctx.tool_gateway),
+        ],
+        context_schema=AgentRuntimeContext
     )
 
-async def materialize_drafts(investigation_id: UUID, candidates: EvidenceCandidateBatch, task: Task):
-    drafts = []
-    refs: dict[str, set] = {}
-    entities = set()
+async def materialize_drafts(ctx, investigation_id: UUID, candidates: EvidenceCandidateBatch, task: Task):
+    drafts: list[EvidenceDraft] = []
+    refs: dict[str, set[str]] = {}
+    entity_pairs: set[tuple] = set()
 
     for candidate in candidates.candidates:
-        # deduplicate source ids for eliminating redundant reads
         for ref in candidate.source_refs:
-            try:
-                refs[ref.source_type].add(ref.source_id)
-            except ValueError:
-                continue
+            refs.setdefault(ref.source_type, set()).add(ref.source_id)
 
-        # (entity_type, observed_value)
         for entity in candidate.entity_candidates:
             normalized_value = normalize_entity(entity.entity_type, entity.observed_value)
-            entities.add((entity.entity_type, normalized_value))
+            entity_pairs.add((entity.entity_type, normalized_value))
 
     rows = [{
         "entity_type": entity_type,
         "normalized_value": normalized_value
-    } for entity_type, normalized_value in entities]
+    } for entity_type, normalized_value in entity_pairs]
 
-    valid_refs: dict[str, list[str]] = {}
-    # batch read ids from EvidenceLedger, ToolCalls, Artifacts
+    valid_refs: dict[str, set[str]] = {}
+    id_column = {
+        "artifact": Artifacts.artifact_id,
+        "tool_result": ToolCalls.tool_invocation_id,
+        "evidence": Ledger.evidence_id,
+    }
+
     async with ctx.session_factory() as session:
-        if refs["artifact"]:
-            stmt = select(Artifacts.artifact_id).where(
-                Artifacts.artifact_id.in_(refs["artifact"])
+        if rows:
+            stmt = insert(Entities).values(rows).on_conflict_do_nothing()
+            await session.execute(stmt)
+
+        for source_type, source_ids in refs.items():
+            column = id_column[source_type]
+            result = await session.scalars(
+                select(column).where(column.in_(source_ids))
             )
+            valid_refs[source_type] = {str(source_id) for source_id in result.all()}
 
-            result = await session.scalars(stmt)
-
-            for source_id in result.all():
-                valid_refs["artifact"].append(str(source_id))
-
-        if refs["tool_result"]:
-            stmt = select(ToolCalls.tool_invocation_id).where(
-                ToolCalls.tool_invocation_id.in_(refs["tool_result"])
-            )
-
-            result = await session.scalars(stmt)
-
-            for source_id in result.all():
-                valid_refs["tool_result"].append(str(source_id))
-
-        if refs["evidence"]:
-            stmt = select(Ledger.evidence_id).where(
-                Ledger.evidence_id.in_(refs["evidence"])
-            )
-
-            result = await session.scalars(stmt)
-
-            for source_id in result.all():
-                valid_refs["evidence"].append(str(source_id))
-
-        stmt = insert(Entities).values(rows).on_conflict_do_nothing()
-        await session.execute(stmt)
-
-        stmt = select(Entities.entity_id, Entities.entity_type, Entities.normalized_value).where(
-            Entities.entity_id.in_(entities)
-        )
-
-        result = await session.scalars(stmt)
-
-        entities = []
-        for entity in result.all():
-            entities.append(str(entity))
-
-        await session.flush()
         await session.commit()
 
     for candidate in candidates.candidates:
         sr = [
             r for r in candidate.source_refs
-            if r in valid_refs.get(r.source_type, []) != []
+            if r.source_id in valid_refs.get(r.source_type, set())
         ]
 
-        existing = [
+        existing = {
             (e.entity_type, normalize_entity(e.entity_type, e.observed_value))
             for e in candidate.entity_candidates
-        ]
+        }
 
         en = [
-            EntityRef(type=type, normalized_value=normalized_value)
-            for type, normalized_value in entities
-            if (type, normalized_value) in existing
+            EntityRef(type=entity_type, normalized_value=normalized_value)
+            for entity_type, normalized_value in entity_pairs
+            if (entity_type, normalized_value) in existing
         ]
 
         drafts.append(EvidenceDraft(
-        investigation_id=investigation_id,
-        kind=candidate.kind,
-        finding=candidate.finding,
-        source_refs=sr,
-        entity_refs=en,
-        trust = TrustLevel.UNTRUSTED_ARTIFACT,
-        provenance = Provenance(...)
+            investigation_id=investigation_id,
+            kind=candidate.kind,
+            finding=candidate.finding,
+            source_refs=sr,
+            entity_refs=en,
+            trust=TrustLevel.UNTRUSTED_ARTIFACT,
+            provenance=Provenance(
+                producer_type="AGENT",
+                producer_id=task.assigned_to.value,
+                tool_name=task.assigned_to.value,
+                tool_version="1.0",
+                model_id=PROFILES[task.assigned_to].llm_profile.model,
+                observed_at=datetime.datetime.now(datetime.timezone.utc),
+            ),
         ))
 
     return drafts
@@ -211,7 +210,7 @@ def validate_tasks(tasks: list[Task]) -> bool:
 
     return True
 
-def build_graph(ctx: WorkerContext):
+async def build_graph(ctx: WorkerContext):
     """
     Build and compile the LangGraph investigation workflow
 
@@ -247,14 +246,21 @@ def build_graph(ctx: WorkerContext):
         agent = agents[task.assigned_to]
 
         # Invoke the agent
-        result = await agent.ainvoke({
-            "messages": [{
-                "role": "user", "content": task.model_dump_json(indent=2)
-            }]
-        })
+        result = await agent.ainvoke(
+            {
+                "messages": [{
+                    "role": "user", "content": task.model_dump_json(indent=2)
+                }]
+            },
+            context=AgentRuntimeContext(
+                investigation_id=state["investigation_id"],
+                agent_role=task.assigned_to,
+                task_id=task.task_id,
+            ),
+        )
 
         batch: EvidenceCandidateBatch = result["structured_response"] # EvidenceCandidateBatch
-        drafts: list[EvidenceDraft] = await materialize_drafts(state["investigation_id"], batch, task)
+        drafts: list[EvidenceDraft] = await materialize_drafts(ctx, state["investigation_id"], batch, task)
 
         worker_result = WorkerResult(
             task_id=task.task_id,
@@ -287,14 +293,20 @@ def build_graph(ctx: WorkerContext):
         }
 
     def hypothesis(state: InvestigationState):
-        result = agents[AgentRole.HYPOTHESIS_AGENT].invoke({
-            "messages": [{
-                "role": "user",
-                "content": "Generate hypotheses based on the following evidence: {}".format(
-                    state["accepted_evidences"],
-                )
-            }]
-        })
+        result = agents[AgentRole.HYPOTHESIS_AGENT].invoke(
+            {
+                "messages": [{
+                    "role": "user",
+                    "content": "Generate hypotheses based on the following evidence: {}".format(
+                        state["accepted_evidences"],
+                    )
+                }]
+            },
+            context=AgentRuntimeContext(
+                investigation_id=state["investigation_id"],
+                agent_role=AgentRole.HYPOTHESIS_AGENT,
+            ),
+        )
 
         hypotheses: list[Hypotheses] = result["structured_response"]["hypotheses"]
 
@@ -303,18 +315,24 @@ def build_graph(ctx: WorkerContext):
         }
 
     def verifier(state: InvestigationState):
-        result = agents[AgentRole.VERIFIER].invoke({
-            "messages": [{
-                "role": "user",
-                "content": "Verify the following evidence: {} and hypotheses: {}\n\nOriginal request: {}".format(
-                    state["accepted_evidences"],
-                    state["hypotheses"],
-                    state["original_request"]
-                )
-            }]
-        })
+        result = agents[AgentRole.VERIFIER].invoke(
+            {
+                "messages": [{
+                    "role": "user",
+                    "content": "Verify the following evidence: {} and hypotheses: {}\n\nOriginal request: {}".format(
+                        state["accepted_evidences"],
+                        state["hypotheses"],
+                        state["original_request"]
+                    )
+                }]
+            },
+            context=AgentRuntimeContext(
+                investigation_id=state["investigation_id"],
+                agent_role=AgentRole.VERIFIER,
+            ),
+        )
 
-        assessments: list[VerifierAssessment] = result["structured_response"]["assessments"]
+        assessments: list[VerifierAssessment] = result["structured_response"]["verifier_assessments"]
         verdict: Verdict | None = result["structured_response"]["verdict"]
 
         return {
@@ -325,25 +343,45 @@ def build_graph(ctx: WorkerContext):
         }
 
     def synthesis(state: InvestigationState):
-        result = agents[AgentRole.SYNTHESIS].invoke({
-            "messages": [{
-                "role": "user",
-                "content": "Based on the following verdict, it's supporting and refuting claims, and the original request, synthesize a final report: {}".format(
-                    state["verdict"],
-                )
-            }]
-        })
+        result = agents[AgentRole.SYNTHESIS].invoke(
+            {
+                "messages": [{
+                    "role": "user",
+                    "content": "Based on the following verdict, it's supporting and refuting claims, and the original request, synthesize a final report: {}".format(
+                        state["verdict"],
+                    )
+                }]
+            },
+            context=AgentRuntimeContext(
+                investigation_id=state["investigation_id"],
+                agent_role=AgentRole.SYNTHESIS,
+            ),
+        )
 
-        synthesis: Synthesis = result["structured_response"]["synthesis"]
+        response = result["structured_response"]["response"]
 
         # persist the synthesis to the ledger or database if needed
 
         return {
-            "synthesis": synthesis
+            "synthesis": Synthesis(
+                decision=DecisionRecord(
+                    decision_id=uuid4(),
+                    investigation_id=state["investigation_id"],
+                    status=DecisionStatus("decided") if result["structured_response"]["decision"] != "inconclusive" else DecisionStatus("insufficient_evidence"),
+                    verdicts=[state["verdict"]] if state["verdict"] else [],
+                    resolved_hypotheses_ids=[],
+                    unresolved_hypotheses_ids=[],
+                    contradictions=[],
+                    evidence_confidence="medium",  # Placeholder, should be computed
+                    evidence_freshness="mixed",  # Placeholder, should be computed
+                    decided_at=datetime.datetime.utcnow()
+                ),
+                response=response
+            )
         }
 
     def orchestrator(state: InvestigationState):
-        if state["iterations"] == 1:
+        if state["iterations"] == 0:
             msg = state["original_request"]
         else:
             msg = "Original request: {}\n\nCurrent findings: {}".format(
@@ -352,12 +390,18 @@ def build_graph(ctx: WorkerContext):
             )
 
         # Invoke the orchestrator agent
-        result = agents[AgentRole.ORCHESTRATOR].invoke({
-            "messages": [{
-                "role": "user",
-                "content": (msg)
-            }]
-        })
+        result = agents[AgentRole.ORCHESTRATOR].invoke(
+            {
+                "messages": [{
+                    "role": "user",
+                    "content": (msg)
+                }]
+            },
+            context=AgentRuntimeContext(
+                investigation_id=state["investigation_id"],
+                agent_role=AgentRole.ORCHESTRATOR,
+            ),
+        )
 
         tasks = result["structured_response"]["tasks"]
 
@@ -377,7 +421,8 @@ def build_graph(ctx: WorkerContext):
                     investigation_id=state["investigation_id"],
                     tasks=[],
                     disposition=result["structured_response"]["disposition"]
-                )
+                ),
+                "iterations": state["iterations"] + 1
             }
 
         if not validate_tasks(tasks):
@@ -387,7 +432,8 @@ def build_graph(ctx: WorkerContext):
                     investigation_id=state["investigation_id"],
                     tasks=[],
                     disposition="malformed_tasks"
-                )
+                ),
+                "iterations": state["iterations"] + 1
             }
 
         # Enforce task limits and policy
@@ -398,11 +444,16 @@ def build_graph(ctx: WorkerContext):
                 investigation_id=state["investigation_id"],
                 tasks=tasks,
                 disposition=result["structured_response"]["disposition"]
-            )
+            ),
+            "iterations": state["iterations"] + 1
         }
 
     def delegate_tasks(state: InvestigationState):
         plan = state["task_plan"]
+
+        if not plan or not plan.tasks:
+            logger.warning(f"No tasks to delegate for investigation {state['investigation_id']}")
+            return []
 
         return [
             Send("execute_task", {
@@ -416,49 +467,58 @@ def build_graph(ctx: WorkerContext):
     def task_validation_routing(state: InvestigationState):
         plan = state["task_plan"]
 
+        if not plan:
+            return "no_actionable_tasks"
+
         if not plan.tasks:
-            return "verifier"
+            return "no_actionable_tasks"
 
         if plan.disposition == "dispatch":
             return "delegate_tasks"
+        else:
+            return plan.disposition
 
-        if plan.disposition in ["no_actionable_tasks", "blocked", "malformed_tasks"]:
-            return "verifier"
+    try:
+        # Use a connection pool for checkpointer as multiple concurrent investigations may be running and writing to the same Postgres database.
+        checkpointer = AsyncPostgresSaver(ctx.db_pool)
+        await checkpointer.setup()
 
-        raise ValueError(f"Unknown task plan disposition: {plan.disposition}")
+        builder = StateGraph(InvestigationState)
 
-    builder = StateGraph(InvestigationState)
+        builder.add_node("orchestrator", orchestrator)
+        builder.add_node("delegate_tasks", delegate_tasks)
+        builder.add_node("execute_task", execute_task)
+        builder.add_node("ledger_writer", ledger_writer)
+        builder.add_node("hypotheses_agent", hypothesis)
+        builder.add_node("verifier", verifier)
+        builder.add_node("synthesis", synthesis)
 
-    builder.add_node("orchestrator", orchestrator)
-    builder.add_node("delegate_tasks", delegate_tasks)
-    builder.add_node("execute_task", execute_task)
-    builder.add_node("ledger_writer", ledger_writer)
-    builder.add_node("hypothesis_agent", hypothesis)
-    builder.add_node("verifier", verifier)
-    builder.add_node("synthesis", synthesis)
+        builder.add_edge(START, "orchestrator")
+        builder.add_conditional_edges(
+            "orchestrator",
+            task_validation_routing,
+            {
+                "delegate_tasks": "delegate_tasks",
+                "no_actionable_tasks": "verifier",
+                "blocked": "verifier",
+                "malformed_tasks": "verifier"
+            })
+        builder.add_edge("delegate_tasks", "execute_task")
+        builder.add_edge("execute_task", "ledger_writer")
+        builder.add_edge("ledger_writer", "hypotheses_agent")
+        builder.add_edge("hypotheses_agent", "verifier")
+        builder.add_conditional_edges(
+            "verifier",
+            lambda state: "synthesis" if state["verdict"] is not None else "continue",
+            {
+                "synthesis": "synthesis",
+                "continue": "orchestrator"
+            }
+        )
+        builder.add_edge("synthesis", END)
 
-    builder.add_edge(START, "orchestrator")
-    builder.add_conditional_edges(
-        "orchestrator",
-        task_validation_routing,
-        {
-            "delegate_tasks": "delegate_tasks",
-            "no_actionable_tasks": "verifier",
-            "blocked": "verifier",
-            "malformed_tasks": "verifier"
-        })
-    builder.add_edge("orchestrator", "verifier")
-    builder.add_edge("delegate_tasks", "execute_task")
-    builder.add_edge("execute_task", "ledger_writer")
-    builder.add_edge("ledger_writer", "verifier")
-    builder.add_conditional_edges(
-        "verifier",
-        lambda state: "synthesis" if state["verdict"] is not None else "continue",
-        {
-            "synthesis": "synthesis",
-            "continue": "orchestrator"
-        }
-    )
-    builder.add_edge("synthesis", END)
+        return builder.compile(checkpointer=checkpointer)
 
-    return builder.compile()
+    except Exception as e:
+        logger.exception(f"Error building graph: {str(e)}")
+        raise

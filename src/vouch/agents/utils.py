@@ -10,6 +10,12 @@ def load_prompt(path: Path, **kwargs):
     try:
         document = frontmatter.load(path)
 
+        # Role prompts carry per-run placeholders ({investigation_id}, {task}, ...)
+        # that are injected via messages at invoke time; only format when the
+        # caller actually supplies values.
+        if not kwargs:
+            return document.content
+
         prompt = ChatPromptTemplate.from_messages([
             ("system", document.content)
         ])

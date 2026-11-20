@@ -1,5 +1,5 @@
 ---
-name: url_agent
+name: web_agent
 description: Investigates URLs and web content, producing evidence candidates
 ---
 

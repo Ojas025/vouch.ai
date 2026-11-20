@@ -13,7 +13,6 @@ from vouch.queue.stream import EventStream
 
 logger = get_logger(__name__)
 
-
 async def publish_outbox(session, stream: EventStream):
     result = await session.execute(
         select(OutboxEvent)
@@ -65,7 +64,7 @@ async def main() -> None:
     configure_logging()
     stream = EventStream(
         redis_url=settings.redis_url,
-        stream_name=settings.events_stream,
+        stream_name=settings.job_queue_stream_key,
     )
 
     await outbox_worker(stream)

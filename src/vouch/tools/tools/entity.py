@@ -621,6 +621,7 @@ SOURCES_BY_TYPE: dict[EntityType, list[SourceName]] = {
 
 
 async def entity_intel(args: EntityIntelArgs) -> EntityIntelOutput:
+    """Single typed entity lookup across passive reputation sources."""
     valid = SOURCES_BY_TYPE.get(args.entity.type, [])
     pattern = _VALID.get(args.entity.type)
     value = args.entity.normalized_value

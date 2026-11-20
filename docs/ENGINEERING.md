@@ -28,3 +28,8 @@
 - Least privilege: only grant the tools required for the given task.
 - Enforce authorization at the tool-execution boundary, on every call, rather than trusting the model.
 - Require a separate approval decision before a restricted action executes
+
+## Agents
+- For resuming investigation through LangGraph checkpoints, audit and ensure idempotency of the side effects caused by each node in the graph.
+- Run a cron job or prune checkpoints for completed/dead investigations to avoid unbounded growth of the database.
+- Use a postgres connection pool for the checkpointer as multiple concurrent investigations may be running and writing to the same Postgres database.

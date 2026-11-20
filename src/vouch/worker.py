@@ -79,7 +79,7 @@ async def get_or_create_investigation(session_factory: async_sessionmaker[AsyncS
                         payload=submission.payload,
                         sha256_digest=submission.sha256_digest
                     ).on_conflict_do_nothing(
-                        index_elements=[Submission.id],
+                        index_elements=["submission_id"],
                         index_where=Investigations.reason == "initial"
                     ).returning(Investigations)
                 )
@@ -242,7 +242,7 @@ class Worker:
                         payload=investigation.payload,
                         sha256_digest=investigation.sha256_digest,
                         reason="initial",
-                        status="received",
+                        status=investigation.status,
                         attempts=investigation.attempts or 0,
                         max_attempts=investigation.max_attempts or 3,
                         not_before=investigation.not_before,
@@ -253,6 +253,21 @@ class Worker:
                         result=investigation.result,
                         last_error=investigation.last_error,
                     )
+
+                    # Already-final investigations can never re-acquire a lease;
+                    # ack and drop so redelivery stops looping on this message.
+                    if investigation.status == "completed":
+                        logger.info(
+                            "redelivered job already terminal; acking",
+                            extra={"event": "job.already_terminal", "component": "worker", "worker_id": self.worker_id, "status": investigation.status},
+                        )
+                        return ExecutionOutcome.COMPLETED
+                    if investigation.status == "dead" or investigation.attempts >= investigation.max_attempts:
+                        logger.info(
+                            "redelivered job already terminal; acking",
+                            extra={"event": "job.already_terminal", "component": "worker", "worker_id": self.worker_id, "status": investigation.status},
+                        )
+                        return ExecutionOutcome.DEAD
 
                     # Acquire lease
                     lease = await self.ctx.leases.acquire(investigation.investigation_id, self.worker_id)
@@ -374,7 +389,8 @@ async def main() -> None:
     configure_logging()
 
     ctx = await init_worker_context()
-    graph = build_graph(ctx)
+
+    graph = await build_graph(ctx)
 
     try:
         await ctx.stream.ensure_group(settings.job_queue_group_name)

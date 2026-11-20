@@ -1,6 +1,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -37,8 +38,8 @@ class DecisionStatus(str, Enum):
     ANALYSIS_UNAVAILABLE = "analysis_unavailable"
 
 class DecisionRecord(BaseModel):
-    decision_id: str
-    investigation_id: str
+    decision_id: UUID
+    investigation_id: UUID
     status: DecisionStatus
     verdicts: list[Verdict]
     resolved_hypotheses_ids: list[str]

@@ -1,4 +1,5 @@
 from calendar import timegm
+from enum import Enum
 from pathlib import Path
 import random
 from time import time
@@ -12,13 +13,18 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import Runnable
 from langchain_litellm import ChatLiteLLM
 from pydantic import BaseModel, ConfigDict, Field
-from vouch.agents.models import Capability
 from vouch.agents.utils import load_prompt
 from vouch.logger import get_logger
 from vouch.observability.spans import ATTR_LLM_MODEL, SPAN_LLM_GENERATE, span
 from vouch.utils import RetryPolicy, _backoff, _is_retryable
 
 logger = get_logger(__name__)
+
+class Capability(str, Enum):
+    VISION = "vision"
+    JSON_SCHEMA = "json_schema"
+    TOOLS = "tools"
+    REASONING = "reasoning"
 
 class LLMProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -29,7 +35,6 @@ class LLMProfile(BaseModel):
 
     capabilities: list[Capability] = Field(default_factory=list)
     timeout_sec: float = Field(default=60, gt=0)
-    max_retries: int = Field(default=3, ge=0, le=5)
     model_kwargs: dict[str, Any] = Field(default_factory=dict)
 
     output_model : type[BaseModel] | None = None
@@ -66,11 +71,12 @@ def _extract_retry_after(e: Exception) -> float | None:
 
 class LLMClient:
     def __init__(self, profile: LLMProfile, system_prompt: Path | str | None = None, output_model: type[BaseModel] | None = None):
-        provider_max_retries = 0 if profile.retry_policy.enabled else profile.max_retries
+        # Single retry owner: profile.retry_policy (custom loop in ainvoke/stream).
+        # LiteLLM retries are always disabled so the two never stack.
         params: dict[str, Any] = {
             "model": profile.model,
             "request_timeout": profile.timeout_sec,
-            "max_retries": provider_max_retries,
+            "max_retries": 0,
             "model_kwargs": profile.model_kwargs,
             "temperature": profile.temperature,
             "max_tokens": profile.max_tokens,
@@ -78,6 +84,10 @@ class LLMClient:
 
         if profile.base_url:
             params["api_base"] = profile.base_url
+            # litellm cannot infer a provider for bare model names (e.g. "minicpm")
+            # on OpenAI-compatible endpoints; qualified names keep their own prefix.
+            if "/" not in profile.model:
+                params["custom_llm_provider"] = "openai"
 
         if profile.api_key not in (None, "", "not-required"):
             api_key = os.getenv(profile.api_key)
@@ -89,6 +99,11 @@ class LLMClient:
 
             params["api_key"] = api_key
 
+        elif profile.base_url:
+            # local OpenAI-compatible servers ignore auth, but the openai SDK
+            # still requires a non-empty key
+            params["api_key"] = "not-required"
+
         self.profile = profile
         self.output_model = output_model
 
@@ -96,8 +111,10 @@ class LLMClient:
             self.system_prompt = load_prompt(system_prompt)
         elif isinstance(system_prompt, str):
             self.system_prompt = system_prompt
+        else:
+            self.system_prompt = None
 
-        if not self.system_prompt.strip():
+        if self.system_prompt is not None and not self.system_prompt.strip():
             raise ValueError("system_prompt cannot be empty")
 
         self.base_model = ChatLiteLLM(**params)
@@ -111,7 +128,11 @@ class LLMClient:
                 ("system", self.system_prompt),
                 MessagesPlaceholder(variable_name="messages"),
             ])
-            self.runnable: Runnable = prompt | model_runnable
+        else:
+            prompt = ChatPromptTemplate.from_messages([
+                MessagesPlaceholder(variable_name="messages"),
+            ])
+        self.runnable: Runnable = prompt | model_runnable
 
     def _fail(self, error: Exception, attempt: int, final: bool) -> None:
         logger.error(
@@ -194,7 +215,7 @@ class LLMClient:
     def get_model(self) -> ChatLiteLLM:
         return self.base_model
 
-    def get_system_prompt(self) -> str:
+    def get_system_prompt(self) -> str | None:
         return self.system_prompt
 
     def get_output_model(self) -> type[BaseModel] | None:

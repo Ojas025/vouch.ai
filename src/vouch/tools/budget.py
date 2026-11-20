@@ -1,8 +1,6 @@
-
-
 class BudgetManager:
     def __init__(self):
         ...
 
-    def try_consume_tool_call(self, investigation_id: str, agent_id: str):
+    def try_consume(self, investigation_id: str, agent_id: str):
         ...

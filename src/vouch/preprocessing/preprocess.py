@@ -14,8 +14,8 @@ from disarm import Text
 from langchain_core.messages import SystemMessage
 from pydantic import BaseModel, Field
 from pydantic_core import PydanticSerializationError
-from vouch.agents.llm import LLMClient
-from vouch.agents.models import Capability, LLMProfile
+from vouch.agents.llm import LLMClient, LLMProfile
+from vouch.agents.models import Capability
 from vouch.agents.registry import PROMPTS_DIR
 from vouch.agents.utils import load_prompt
 from vouch.ingestion import IncomingMessage
@@ -36,7 +36,6 @@ entity_extractor = LLMClient(LLMProfile(
     api_key="not-required",
     base_url="http://127.0.0.1:8080/v1",
     capabilities=[Capability.JSON_SCHEMA, Capability.VISION],
-    system_prompt_path=PROMPTS_DIR / "entity_extractor.prompt.md"
 ), output_model=ExtractorOutput)
 
 async def extract_entities_using_llm(text: str, canonical_msg: CanonicalMessage):
@@ -47,7 +46,7 @@ async def extract_entities_using_llm(text: str, canonical_msg: CanonicalMessage)
         ]
 
         prompt = load_prompt(
-            entity_extractor.profile.system_prompt_path,
+            PROMPTS_DIR / "entity_extractor.prompt.md",
             text=text,
             obtained_entities=obtained_entities
         )

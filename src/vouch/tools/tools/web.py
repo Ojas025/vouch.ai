@@ -567,6 +567,7 @@ tavily_client = AsyncTavilyClient(api_key=settings.tavily_api_key, client=tavily
 URL_ADAPTER = TypeAdapter(AnyHttpUrl)
 
 async def web_search(args: WebSearchArgs) -> WebSearchOutput:
+    """Search on the web to query about a claim."""
 
     def failure(error: WebSearchError) -> WebSearchOutput:
         return WebSearchOutput(

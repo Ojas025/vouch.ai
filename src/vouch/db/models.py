@@ -114,12 +114,12 @@ class Investigations(Base):
         CheckConstraint(
             """
             status IN (
-                'RECEIVED',
-                'PROCESSING',
-                'COMPLETED',
-                'DEAD',
-                'FAILED',
-                'RETRY'
+                'received',
+                'processing',
+                'completed',
+                'dead',
+                'failed',
+                'retry'
             )
             """,
             name="ck_inv_execution_status"
@@ -137,15 +137,15 @@ class Investigations(Base):
             """
             (
                 status = 'processing'
-                AND lease_owner IS NULL
-                AND lease_expires_at IS NULL
-                AND lease_renewed_at IS NULL
+                AND lease_owner IS NOT NULL
+                AND lease_expires_at IS NOT NULL
+                AND lease_renewed_at IS NOT NULL
             ) OR
             (
                 status <> 'processing'
-                AND lease_owner is NOT NULL
-                AND lease_expires_at IS NOT NULL
-                AND lease_renewed_at IS NOT NULL
+                AND lease_owner IS NULL
+                AND lease_expires_at IS NULL
+                AND lease_renewed_at IS NULL
             )
             """,
             name="ck_inv_lease_consistency"
@@ -156,6 +156,13 @@ class Investigations(Base):
             status <> 'retry'
             OR not_before IS NOT NULL
             """
+        ),
+
+        CheckConstraint(
+            """
+            tool_call_limit >= 0 AND tool_calls_used >= 0
+            """,
+            name="ck_valid_tool_call_limits"
         ),
 
         Index(
@@ -188,6 +195,9 @@ class Investigations(Base):
         DateTime(timezone=True),
         nullable=True
     )
+
+    tool_call_limit: Mapped[int] = mapped_column(Integer, server_default=text("30"))
+    tool_calls_used: Mapped[int] = mapped_column(Integer, server_default=text("0"))
 
     lease_owner: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
@@ -427,7 +437,7 @@ class ToolCalls(Base):
         ),
     )
 
-    tool_invocation_id: Mapped[uuid.UUID] = mapped_column(
+    tool_call_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid7,
@@ -443,6 +453,16 @@ class ToolCalls(Base):
         UUID(as_uuid=True),
         nullable=True,
     )
+
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        unique=True,
+    )
+
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'running'")) # completed, failed, retryable_failed
+
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
 
     agent_role: Mapped[str] = mapped_column(String(30), nullable=False)
 
@@ -461,6 +481,12 @@ class ToolCalls(Base):
     )
 
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
     completed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
